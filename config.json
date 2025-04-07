@@ -1,0 +1,23 @@
+{
+	"network": {
+		"name": "TagVision",
+		"address": "127.0.0.1"
+	},
+	"detector_params": {
+		"quad_decimate": 2.5,
+		"thread_count": 4
+	},
+	"modules": {
+		"main": {
+			"id": "main",
+			"camera": {
+				"device_id": "apriltags2.jpg",
+				"backend": "fake",
+				"width": 1600,
+				"height": 1200,
+				"fps": 1000,
+				"is_monochrome": false
+			}
+		}
+	}
+}

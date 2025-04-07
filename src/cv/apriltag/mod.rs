@@ -2,10 +2,11 @@ mod ffi;
 pub mod params;
 
 use ffi::*;
+use imageproc::pixelops::interpolate;
 use std::fmt::Debug;
 
-use image::GrayImage;
-use nalgebra::{Matrix2x4, Vector2};
+use image::{GrayImage, Rgb, RgbImage};
+use nalgebra::{Matrix2x4, Matrix4x2, Vector2};
 use params::AprilTagDetectorParams;
 
 pub struct AprilTagDetector {
@@ -13,6 +14,9 @@ pub struct AprilTagDetector {
 	family: *mut _AprilTagFamily,
 	params: AprilTagDetectorParams,
 }
+
+unsafe impl Send for AprilTagDetector {}
+unsafe impl Sync for AprilTagDetector {}
 
 impl AprilTagDetector {
 	pub fn new(params: AprilTagDetectorParams) -> Self {
@@ -37,17 +41,17 @@ impl AprilTagDetector {
 	}
 
 	/// Detect markers in an image
-	pub fn detect_markers(&self, mut image: GrayImage) -> AprilTagDetections {
+	pub fn detect_markers(&self, image: &GrayImage) -> AprilTagDetections {
 		let raw_detections = unsafe {
 			let width = image.width() as i32;
 			let height = image.height() as i32;
-			let mut image = _ImageU8 {
+			let image = _ImageU8 {
 				width,
 				height,
 				stride: width,
-				buf: image.as_mut_ptr(),
+				buf: image.as_ptr() as *mut u8,
 			};
-			apriltag_detector_detect(self.inner, &mut image)
+			apriltag_detector_detect(self.inner, &image)
 		};
 
 		AprilTagDetections {
@@ -65,7 +69,6 @@ impl AprilTagDetector {
 				.get::<*mut _AprilTagFamily>(0)
 				.map(|x| (*(*x)).clone());
 			dbg!(family);
-			// dbg!(&(*(*self.inner).tp));
 			(*(*self.inner).tp).report();
 		}
 	}
@@ -91,6 +94,8 @@ pub struct AprilTagDetections {
 	detections: *mut _ZArray,
 }
 
+unsafe impl Send for AprilTagDetections {}
+
 impl AprilTagDetections {
 	/// Gets the detection at the given index
 	pub fn get_detection(&self, idx: usize) -> Option<AprilTagDetection> {
@@ -113,7 +118,7 @@ impl AprilTagDetections {
 			hamming: raw_detection.hamming as u8,
 			decision_margin: raw_detection.decision_margin,
 			center: Vector2::from_row_slice(&raw_detection.c),
-			corners: Matrix2x4::from_row_slice(raw_detection.p.as_flattened()),
+			corners: Matrix2x4::from_row_slice(raw_detection.p.as_flattened()).transpose(),
 		})
 	}
 
@@ -121,6 +126,13 @@ impl AprilTagDetections {
 	pub fn iter<'a>(&'a self) -> impl Iterator<Item = AprilTagDetection> + 'a {
 		let size = unsafe { (*self.detections).size } as usize;
 		(0..size).map(|x| unsafe { self.get_detection(x).unwrap_unchecked() })
+	}
+
+	/// Draws these detections on an image
+	pub fn draw(&self, image: &mut RgbImage) {
+		for detection in self.iter() {
+			detection.draw(image);
+		}
 	}
 }
 
@@ -154,5 +166,39 @@ pub struct AprilTagDetection {
 	pub hamming: u8,
 	pub decision_margin: f32,
 	pub center: Vector2<f64>,
-	pub corners: Matrix2x4<f64>,
+	pub corners: Matrix4x2<f64>,
+}
+
+impl AprilTagDetection {
+	/// Draws this tag detection on an image
+	pub fn draw(&self, image: &mut RgbImage) {
+		imageproc::drawing::draw_antialiased_line_segment_mut(
+			image,
+			(self.corners[(0, 0)] as i32, self.corners[(0, 1)] as i32),
+			(self.corners[(1, 0)] as i32, self.corners[(1, 1)] as i32),
+			Rgb([255, 0, 0]),
+			interpolate,
+		);
+		imageproc::drawing::draw_antialiased_line_segment_mut(
+			image,
+			(self.corners[(1, 0)] as i32, self.corners[(1, 1)] as i32),
+			(self.corners[(2, 0)] as i32, self.corners[(2, 1)] as i32),
+			Rgb([255, 0, 0]),
+			interpolate,
+		);
+		imageproc::drawing::draw_antialiased_line_segment_mut(
+			image,
+			(self.corners[(2, 0)] as i32, self.corners[(2, 1)] as i32),
+			(self.corners[(3, 0)] as i32, self.corners[(3, 1)] as i32),
+			Rgb([255, 0, 0]),
+			interpolate,
+		);
+		imageproc::drawing::draw_antialiased_line_segment_mut(
+			image,
+			(self.corners[(3, 0)] as i32, self.corners[(3, 1)] as i32),
+			(self.corners[(0, 0)] as i32, self.corners[(0, 1)] as i32),
+			Rgb([255, 0, 0]),
+			interpolate,
+		);
+	}
 }

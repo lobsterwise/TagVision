@@ -11,7 +11,7 @@ extern "C" {
 	pub fn apriltag_detector_destroy(td: *mut _AprilTagDetector);
 	pub fn apriltag_detector_detect(
 		td: *mut _AprilTagDetector,
-		img_orig: *mut _ImageU8,
+		img_orig: *const _ImageU8,
 	) -> *mut _ZArray;
 	pub fn apriltag_detections_destroy(detections: *mut _ZArray);
 	pub fn tag36h11_create() -> *mut _AprilTagFamily;
@@ -33,6 +33,8 @@ pub struct _AprilTagFamily {
 	pub name: *const c_char,
 	pub r#impl: *const c_void,
 }
+
+unsafe impl Send for _AprilTagFamily {}
 
 #[derive(Debug)]
 #[repr(C)]
@@ -64,6 +66,8 @@ pub struct _AprilTagDetector {
 	pub wp: *mut _WorkerPool,
 	pub mutex: DebuggablePthreadMutex,
 }
+
+unsafe impl Send for _AprilTagDetector {}
 
 #[repr(C)]
 pub struct _AprilTagDetection {
@@ -112,6 +116,8 @@ pub struct _TimeProfile {
 	utime: i64,
 	data: *const _ZArray,
 }
+
+unsafe impl Send for _TimeProfile {}
 
 impl _TimeProfile {
 	pub fn report(&self) {
