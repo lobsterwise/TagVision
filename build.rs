@@ -1,5 +1,3 @@
-use std::process::Command;
-
 fn main() {
 	// Command::new("./build_apriltag.sh")
 	// 	.spawn()

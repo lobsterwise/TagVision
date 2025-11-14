@@ -2,12 +2,6 @@ use std::{fs::File, time::Instant};
 
 use config::Config;
 use cv::apriltag::{params::AprilTagDetectorParams, AprilTagDetector};
-use image::GrayImage;
-use nokhwa::{
-	pixel_format::LumaFormat,
-	utils::{CameraIndex, RequestedFormat, RequestedFormatType},
-	Camera,
-};
 use runtime::Runtime;
 
 /// Camera hardware interfaces
@@ -25,7 +19,7 @@ mod runtime;
 /// General utilities
 mod util;
 
-#[tokio::main]
+#[tokio::main(flavor = "multi_thread")]
 async fn main() {
 	let config_file = File::open("config.json").expect("Failed to open config file");
 	let config: Config = serde_json::from_reader(config_file).expect("Failed to parse config file");

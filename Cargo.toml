@@ -7,14 +7,13 @@ edition = "2021"
 debug = 2
 
 [dependencies]
-crossbeam-channel = "0.5.14"
+approx = "0.5.1"
 crossbeam-queue = "0.3.12"
 gstreamer = { version = "0.23.5", optional = true }
 image = "0.25.6"
 imageproc = "0.25.0"
 libc = "0.2.171"
 nalgebra = "0.33.2"
-nokhwa = "0.10.7"
 nt_client = "0.3.0"
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"

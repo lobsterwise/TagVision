@@ -1,12 +1,16 @@
 use std::{net::Ipv4Addr, str::FromStr, time::Duration};
 
-use image::RgbImage;
+use image::GrayImage;
 use nt_client::NewClientOptions;
 use tokio::sync::mpsc::Receiver;
 
 use crate::{
-	config::{NetworkConfig, RuntimeConfig, DEFAULT_UPDATE_RATE},
-	cv::geom::PoseUpdate,
+	config::{NetworkConfig, RuntimeConfig},
+	cv::{
+		apriltag::AprilTagDetection,
+		geom::PoseUpdate,
+		img_utils::{fast_gray_to_rgb, ImageAllocator},
+	},
 	util::Timer,
 };
 
@@ -40,6 +44,7 @@ impl Output {
 			runtime_config,
 			fps_timer: Timer::new(),
 			fps_event_count: 0,
+			image_allocator: ImageAllocator::new(),
 		};
 
 		tokio::spawn(thread_data.run_forever());
@@ -56,6 +61,7 @@ struct OutputThread {
 	runtime_config: RuntimeConfig,
 	fps_timer: Timer,
 	fps_event_count: u16,
+	image_allocator: ImageAllocator,
 }
 
 impl OutputThread {
@@ -74,11 +80,21 @@ impl OutputThread {
 
 	async fn run(&mut self) {
 		if let Some(output) = self.input.recv().await {
+			if let Some(frame) = output.frame {
+				let rgb_image = self
+					.image_allocator
+					.get_rgb_image(frame.width(), frame.height());
+				fast_gray_to_rgb(&frame, rgb_image);
+				// let mut rgb_image = DynamicImage::ImageLuma8(input.frame.image).into_rgb8();
+				for detection in output.detections {
+					detection.draw(rgb_image);
+				}
+			}
 			self.fps_event_count += 1;
 		}
 
 		// Calculate FPS
-		let fps_interval = 0.2;
+		let fps_interval = 1.5;
 		if self
 			.fps_timer
 			.interval(Duration::from_secs_f32(fps_interval))
@@ -94,5 +110,6 @@ impl OutputThread {
 pub struct VisionOutput {
 	pub module: String,
 	pub update: PoseUpdate,
-	pub frame: Option<RgbImage>,
+	pub frame: Option<GrayImage>,
+	pub detections: Vec<AprilTagDetection>,
 }

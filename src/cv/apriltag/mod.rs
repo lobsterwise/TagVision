@@ -1,4 +1,5 @@
 mod ffi;
+pub mod layout;
 pub mod params;
 
 use ffi::*;
@@ -6,8 +7,10 @@ use imageproc::pixelops::interpolate;
 use std::fmt::Debug;
 
 use image::{GrayImage, Rgb, RgbImage};
-use nalgebra::{Matrix2x4, Matrix4x2, Vector2};
+use nalgebra::{Matrix2x4, Matrix3x4, Matrix4x2, Vector2};
 use params::AprilTagDetectorParams;
+
+use super::distort::OpenCVCameraIntrinsics;
 
 pub struct AprilTagDetector {
 	inner: *mut _AprilTagDetector,
@@ -42,17 +45,16 @@ impl AprilTagDetector {
 
 	/// Detect markers in an image
 	pub fn detect_markers(&self, image: &GrayImage) -> AprilTagDetections {
-		let raw_detections = unsafe {
-			let width = image.width() as i32;
-			let height = image.height() as i32;
-			let image = _ImageU8 {
-				width,
-				height,
-				stride: width,
-				buf: image.as_ptr() as *mut u8,
-			};
-			apriltag_detector_detect(self.inner, &image)
+		let width = image.width() as i32;
+		let height = image.height() as i32;
+		let image = _ImageU8 {
+			width,
+			height,
+			stride: width,
+			buf: image.as_ptr() as *mut u8,
 		};
+
+		let raw_detections = unsafe { apriltag_detector_detect(self.inner, &image) };
 
 		AprilTagDetections {
 			detections: raw_detections,
@@ -134,6 +136,11 @@ impl AprilTagDetections {
 			detection.draw(image);
 		}
 	}
+
+	/// Gets these detections as a vector
+	pub fn to_vec(self) -> Vec<AprilTagDetection> {
+		self.iter().collect()
+	}
 }
 
 impl Drop for AprilTagDetections {
@@ -200,5 +207,18 @@ impl AprilTagDetection {
 			Rgb([255, 0, 0]),
 			interpolate,
 		);
+	}
+
+	/// Undistorts this detection's corners using the given camera intrinsics
+	pub fn get_undistorted_corners(&self, intrinsics: &OpenCVCameraIntrinsics) -> Matrix3x4<f64> {
+		let corners = self.corners.transpose();
+
+		// Undistort each corner
+		let v1 = intrinsics.unproject_one(&corners.column(0).clone_owned());
+		let v2 = intrinsics.unproject_one(&corners.column(1).clone_owned());
+		let v3 = intrinsics.unproject_one(&corners.column(2).clone_owned());
+		let v4 = intrinsics.unproject_one(&corners.column(3).clone_owned());
+
+		Matrix3x4::from_columns(&[v1, v2, v3, v4])
 	}
 }

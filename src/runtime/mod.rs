@@ -7,6 +7,7 @@ use vision::{VisionRuntime, VisionThreadInput};
 
 use crate::{
 	config::{Config, DEFAULT_RECONNECT_INTERVAL, DEFAULT_UPDATE_RATE},
+	cv::apriltag::layout::AprilTagLayout,
 	module::Module,
 	output::Output,
 	util::Timer,
@@ -14,12 +15,13 @@ use crate::{
 
 mod vision;
 
+/// Runtime for the tag vision that manages camera modules, output, and threads
 pub struct Runtime {
 	config: Config,
 	modules: HashMap<String, Module>,
 	/// IDs modules that have yet to be initialized
 	uninitialized_modules: HashSet<String>,
-	/// Timer to periodically re-initialize modules
+	/// Timer to periodically re-initialize dead modules
 	module_init_timer: Timer,
 	vision_runtime: VisionRuntime,
 	output: Output,
@@ -30,10 +32,16 @@ impl Runtime {
 	pub fn new(config: Config) -> Self {
 		let modules = config.modules.keys().cloned().collect();
 
+		let layout = AprilTagLayout::load_from_preset(config.tags.layout);
+
 		// Set up all the channels
 
-		let (vision_runtime, output_receiver) =
-			VisionRuntime::new(&config.detector_params, &config.runtime);
+		let (vision_runtime, output_receiver) = VisionRuntime::new(
+			&config.detector_params,
+			&config.runtime,
+			&config.tags,
+			&layout,
+		);
 
 		let output = Output::new(
 			output_receiver,
@@ -120,6 +128,7 @@ impl Runtime {
 									.send(VisionThreadInput {
 										module: module_id.clone(),
 										frame,
+										intrinsics: module.get_intrinsics().clone(),
 									})
 									.await
 								{

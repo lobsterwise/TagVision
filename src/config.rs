@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::cv::apriltag::params::AprilTagDetectorParams;
+use crate::cv::{apriltag::{layout::AprilTagLayoutPreset, params::AprilTagDetectorParams}, distort::CameraCalibration};
 
 /// Configuration for the whole program
 #[derive(Deserialize)]
@@ -15,6 +15,8 @@ pub struct Config {
 	/// Parameters for the AprilTag detector
 	#[serde(default)]
 	pub detector_params: AprilTagDetectorParams,
+	/// Configuration for the AprilTags
+	pub tags: TagConfig,
 	/// Configuration for the runtime
 	#[serde(default)]
 	pub runtime: RuntimeConfig,
@@ -34,6 +36,15 @@ pub struct NetworkConfig {
 	/// Time to wait between reconnects, in seconds
 	#[serde(default)]
 	pub reconnect_time: Option<f32>,
+}
+
+/// Configuration for the tags
+#[derive(Deserialize, Clone)]
+pub struct TagConfig {
+	/// The size of one side of the AprilTags in inches
+	pub tag_size: f64,
+	/// The name of the tag layout to use
+	pub layout: AprilTagLayoutPreset,
 }
 
 /// Configuration for a single camera module
@@ -61,6 +72,8 @@ pub struct CameraConfig {
 	pub fps: u16,
 	/// Whether or not this is a monochrome camera. If it is, we can skip the conversion to monochrome for the AprilTag detector
 	pub is_monochrome: bool,
+	/// The intrinsics of the camera
+	pub intrinsics: CameraCalibration,
 	/// The exposure of the camera in microseconds of exposure time
 	#[serde(default)]
 	pub exposure: Option<u16>,
@@ -107,10 +120,3 @@ pub struct RuntimeConfig {
 pub const DEFAULT_QUEUE_SIZE: u8 = 10;
 pub const DEFAULT_UPDATE_RATE: f32 = 0.01;
 pub const DEFAULT_RECONNECT_INTERVAL: f32 = 1.0;
-
-/// Camera intrinsics
-#[derive(Deserialize)]
-pub struct CameraCalibration {
-	pub camera_matrix: [[f64; 3]; 3],
-	pub distortion: [f64; 5],
-}
