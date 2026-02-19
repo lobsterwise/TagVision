@@ -29,7 +29,7 @@ pub struct Runtime {
 
 impl Runtime {
 	/// Start the runtime. Modules will not be initialized until the runtime starts
-	pub fn new(config: Config) -> Self {
+	pub async fn new(config: Config) -> Self {
 		let modules = config.modules.keys().cloned().collect();
 
 		let layout = AprilTagLayout::load_from_preset(config.tags.layout);
@@ -47,7 +47,9 @@ impl Runtime {
 			output_receiver,
 			config.network.clone(),
 			config.runtime.clone(),
-		);
+			&modules,
+		)
+		.await;
 
 		Self {
 			config,
@@ -132,7 +134,7 @@ impl Runtime {
 									})
 									.await
 								{
-									// eprintln!("Vision thread not available: {e}");
+									eprintln!("Vision thread not available: {e}");
 								}
 							}
 							Err(e) => {

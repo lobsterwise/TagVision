@@ -127,7 +127,7 @@ impl VisionThread {
 			// dbg!(&detections);
 
 			let pose = solve_tags(&detections, &input.intrinsics, &self.layout, self.tag_size);
-			dbg!(&pose);
+			// dbg!(&pose);
 			if let Some(pose) = pose {
 				let update = PoseUpdate {
 					pose,
@@ -163,10 +163,10 @@ fn solve_tags(
 			continue;
 		};
 
-		dbg!(&detection.corners);
+		// dbg!(&detection.corners);
 		// dbg!(&intrinsics);
 		let undistorted = detection.get_undistorted_corners(intrinsics);
-		dbg!(&undistorted);
+		// dbg!(&undistorted);
 		let solution = solver.solve(tag_corners_3d, undistorted);
 		let Some(solution) = solution else {
 			continue;

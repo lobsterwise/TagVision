@@ -61,6 +61,10 @@ impl Pose3D {
 			rz: self.rz + other.rz,
 		}
 	}
+
+	pub fn as_array(&self) -> [f64; 6] {
+		[self.x, self.y, self.z, self.rx, self.ry, self.rz]
+	}
 }
 
 fn rotation_matrix_to_euler(rotation_matrix: Matrix3<f64>) -> (f64, f64, f64) {
@@ -120,4 +124,18 @@ pub enum PnPSolution {
 pub struct PoseUpdate {
 	pub pose: Pose3D,
 	pub timestamp: u128,
+}
+
+impl PoseUpdate {
+	pub fn as_array(&self) -> [f64; 7] {
+		[
+			self.pose.x,
+			self.pose.y,
+			self.pose.z,
+			self.pose.rx,
+			self.pose.ry,
+			self.pose.rz,
+			self.timestamp as f64,
+		]
+	}
 }

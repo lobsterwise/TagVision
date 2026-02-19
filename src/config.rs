@@ -33,9 +33,12 @@ pub struct NetworkConfig {
 	/// The IP address to use
 	#[serde(default)]
 	pub address: Option<String>,
+	/// Whether NT connection is disabled. Only for local testing.
+	#[serde(default)]
+	pub disabled: bool,
 	/// Time to wait between reconnects, in seconds
 	#[serde(default)]
-	pub reconnect_time: Option<f32>,
+	pub reconnect_interval: Option<f32>,
 }
 
 /// Configuration for the tags

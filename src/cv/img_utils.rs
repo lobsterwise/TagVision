@@ -19,13 +19,13 @@ impl ImageAllocator {
 	pub fn get_gray_image(&mut self, width: u32, height: u32) -> &mut GrayImage {
 		self.gray_images
 			.entry((width, height))
-			.or_insert(GrayImage::new(width, height))
+			.or_insert_with(|| GrayImage::new(width, height))
 	}
 
 	pub fn get_rgb_image(&mut self, width: u32, height: u32) -> &mut RgbImage {
 		self.rgb_images
 			.entry((width, height))
-			.or_insert(RgbImage::new(width, height))
+			.or_insert_with(|| RgbImage::new(width, height))
 	}
 }
 

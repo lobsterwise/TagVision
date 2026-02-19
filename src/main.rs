@@ -24,7 +24,7 @@ async fn main() {
 	let config_file = File::open("config.json").expect("Failed to open config file");
 	let config: Config = serde_json::from_reader(config_file).expect("Failed to parse config file");
 
-	let runtime = Runtime::new(config);
+	let runtime = Runtime::new(config).await;
 	println!("Runtime initialized");
 
 	runtime.run_forever().await;

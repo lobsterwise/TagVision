@@ -1,7 +1,8 @@
 {
 	"network": {
 		"name": "TagVision",
-		"address": "127.0.0.1"
+		"address": "0.0.0.0",
+		"disabled": false
 	},
 	"detector_params": {
 		"quad_decimate": 3.0,
@@ -19,7 +20,7 @@
 				"backend": "fake",
 				"width": 1600,
 				"height": 1200,
-				"fps": 60,
+				"fps": 500,
 				"is_monochrome": false,
 				"intrinsics": {
 					"camera_matrix": [
