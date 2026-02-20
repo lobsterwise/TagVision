@@ -36,24 +36,24 @@ impl OpenCVCameraIntrinsics {
 		}
 	}
 
-	fn rd(&self, r: f64) -> f64 {
-		let r2 = r * r;
-		r * (1.0 + self.k1 * r2 + self.k2 * r2 * r2 + self.k3 * r2 * r2 * r2)
-	}
+	// fn rd(&self, r: f64) -> f64 {
+	// 	let r2 = r * r;
+	// 	r * (1.0 + self.k1 * r2 + self.k2 * r2 * r2 + self.k3 * r2 * r2 * r2)
+	// }
 
-	fn rd_dr(&self, r: f64) -> f64 {
-		let r2 = r * r;
-		1.0 + 3.0 * self.k1 * r2 + 5.0 * self.k2 * r2 * r2 + 7.0 * self.k3 * r2 * r2 * r2
-	}
+	// fn rd_dr(&self, r: f64) -> f64 {
+	// 	let r2 = r * r;
+	// 	1.0 + 3.0 * self.k1 * r2 + 5.0 * self.k2 * r2 * r2 + 7.0 * self.k3 * r2 * r2 * r2
+	// }
 
-	fn tangential_distort(&self, xn: f64, yn: f64) -> (f64, f64) {
-		let r2 = xn * xn + yn * yn;
-		let r = r2.sqrt();
-		let d = self.rd(r) / r;
-		let xd = xn * d + 2.0 * self.p1 * xn * yn + self.p2 * (r2 + 2.0 * xn * xn);
-		let yd = yn * d + self.p1 * (r2 + 2.0 * yn * yn) + 2.0 * self.p2 * xn * yn;
-		(xd, yd)
-	}
+	// fn tangential_distort(&self, xn: f64, yn: f64) -> (f64, f64) {
+	// 	let r2 = xn * xn + yn * yn;
+	// 	let r = r2.sqrt();
+	// 	let d = self.rd(r) / r;
+	// 	let xd = xn * d + 2.0 * self.p1 * xn * yn + self.p2 * (r2 + 2.0 * xn * xn);
+	// 	let yd = yn * d + self.p1 * (r2 + 2.0 * yn * yn) + 2.0 * self.p2 * xn * yn;
+	// 	(xd, yd)
+	// }
 
 	/// New impl with fixed-point iteration
 	pub fn unproject_one(&self, pt: &Vector2<f64>) -> Vector3<f64> {
@@ -99,46 +99,46 @@ impl OpenCVCameraIntrinsics {
 		Vector3::new(x, y, 1.0)
 	}
 
-	/// Old impl
-	pub fn unproject_one_old(&self, pt: &Vector2<f64>) -> Vector3<f64> {
-		let xd = (pt[0] - self.cx) / self.fx;
-		let yd = (pt[1] - self.cy) / self.fy;
-		let threshold0 = 1e-6;
-		let threshold1 = 1e-12;
-		let rd_2 = xd * xd + yd * yd;
-		let rd = rd_2.sqrt();
-		let mut r = rd;
-		if rd > threshold0 {
-			for _ in 0..5 {
-				let r_next = r - (self.rd(r) - rd) / self.rd_dr(r);
-				if (r_next - r).abs() < threshold0 {
-					r = r_next;
-					break;
-				}
-				r = r_next;
-			}
+	// /// Old impl
+	// pub fn unproject_one_old(&self, pt: &Vector2<f64>) -> Vector3<f64> {
+	// 	let xd = (pt[0] - self.cx) / self.fx;
+	// 	let yd = (pt[1] - self.cy) / self.fy;
+	// 	let threshold0 = 1e-6;
+	// 	let threshold1 = 1e-12;
+	// 	let rd_2 = xd * xd + yd * yd;
+	// 	let rd = rd_2.sqrt();
+	// 	let mut r = rd;
+	// 	if rd > threshold0 {
+	// 		for _ in 0..5 {
+	// 			let r_next = r - (self.rd(r) - rd) / self.rd_dr(r);
+	// 			if (r_next - r).abs() < threshold0 {
+	// 				r = r_next;
+	// 				break;
+	// 			}
+	// 			r = r_next;
+	// 		}
 
-			let d = self.rd(r) / r;
-			let mut xn = xd / d;
-			let mut yn = yd / d;
+	// 		let d = self.rd(r) / r;
+	// 		let mut xn = xd / d;
+	// 		let mut yn = yd / d;
 
-			let max_iter = 10;
-			for _ in 0..max_iter {
-				let (temp_dx, temp_dy) = self.tangential_distort(xn, yn);
-				let (step_x, step_y) = (temp_dx - xd, temp_dy - yd);
-				(xn, yn) = (xn - step_x, yn - step_y);
-				if (step_x * step_x + step_y * step_y) < threshold1 {
-					#[cfg(test)]
-					println!("Threshold hit");
-					break;
-				}
-			}
+	// 		let max_iter = 10;
+	// 		for _ in 0..max_iter {
+	// 			let (temp_dx, temp_dy) = self.tangential_distort(xn, yn);
+	// 			let (step_x, step_y) = (temp_dx - xd, temp_dy - yd);
+	// 			(xn, yn) = (xn - step_x, yn - step_y);
+	// 			if (step_x * step_x + step_y * step_y) < threshold1 {
+	// 				#[cfg(test)]
+	// 				println!("Threshold hit");
+	// 				break;
+	// 			}
+	// 		}
 
-			Vector3::new(xn, yn, 1.0)
-		} else {
-			Vector3::new(0.0, 0.0, 1.0)
-		}
-	}
+	// 		Vector3::new(xn, yn, 1.0)
+	// 	} else {
+	// 		Vector3::new(0.0, 0.0, 1.0)
+	// 	}
+	// }
 }
 
 #[cfg(test)]

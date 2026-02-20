@@ -15,7 +15,6 @@ use super::distort::OpenCVCameraIntrinsics;
 pub struct AprilTagDetector {
 	inner: *mut _AprilTagDetector,
 	family: *mut _AprilTagFamily,
-	params: AprilTagDetectorParams,
 }
 
 unsafe impl Send for AprilTagDetector {}
@@ -36,11 +35,7 @@ impl AprilTagDetector {
 
 			(inner, family)
 		};
-		Self {
-			inner,
-			params,
-			family,
-		}
+		Self { inner, family }
 	}
 
 	/// Detect markers in an image

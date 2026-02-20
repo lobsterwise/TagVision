@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use image::{GrayImage, Pixel, Rgb, RgbImage};
+use image::{GrayImage, RgbImage};
 
 /// Maintains reusable allocations for multiple image sizes
 pub struct ImageAllocator {

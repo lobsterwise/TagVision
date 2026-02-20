@@ -67,7 +67,10 @@ impl CameraBackend for UVCCamera {
 						frame.to_bytes().to_vec(),
 					);
 					if let Some(image) = image {
-						queue.force_push(Ok(CameraFrame { timestamp, image }));
+						queue.force_push(Ok(CameraFrame {
+							timestamp,
+							image: Arc::new(image),
+						}));
 					} else {
 						queue.force_push(Err(CaptureError::DecodeError(
 							"Improper dimensions".into(),
@@ -81,12 +84,14 @@ impl CameraBackend for UVCCamera {
 		Ok(Self { queue })
 	}
 
-	fn get_frames(&mut self) -> Result<Vec<Result<CameraFrame, CaptureError>>, CaptureError> {
-		let mut out = Vec::new();
+	fn get_frames(
+		&mut self,
+		buf: &mut Vec<Result<CameraFrame, CaptureError>>,
+	) -> Result<(), CaptureError> {
 		while let Some(frame) = self.queue.pop() {
-			out.push(frame);
+			buf.push(frame);
 		}
 
-		Ok(out)
+		Ok(())
 	}
 }

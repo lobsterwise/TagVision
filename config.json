@@ -6,7 +6,7 @@
 	},
 	"detector_params": {
 		"quad_decimate": 3.0,
-		"thread_count": 2
+		"thread_count": 8
 	},
 	"tags": {
 		"layout": "2025_welded",
@@ -48,7 +48,8 @@
 						0.018512713297153965
 					]
 				}
-			}
+			},
+			"max_errors": 5
 		}
 	}
 }

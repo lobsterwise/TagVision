@@ -1,4 +1,7 @@
-use std::time::{Duration, SystemTime, UNIX_EPOCH};
+use std::{
+	sync::Arc,
+	time::{Duration, SystemTime, UNIX_EPOCH},
+};
 
 use image::GrayImage;
 
@@ -10,7 +13,7 @@ use crate::{
 use super::{CameraBackend, CameraFrame, CameraSetupError, CaptureError};
 
 pub struct FakeCamera {
-	image: GrayImage,
+	image: Arc<GrayImage>,
 	/// Timer to produce images at a constant FPS
 	timer: Timer,
 	interval: f32,
@@ -23,8 +26,9 @@ impl CameraBackend for FakeCamera {
 	) -> Result<Self, CameraSetupError> {
 		let _ = runtime_config;
 
-		let image = image::open(&config.device_id).unwrap();
-		let image = image.into();
+		let image = image::open(&config.device_id)
+			.map_err(|e| CameraSetupError::CameraNotFound(e.to_string()))?;
+		let image = Arc::new(image.into());
 
 		Ok(Self {
 			timer: Timer::new(),
@@ -33,18 +37,22 @@ impl CameraBackend for FakeCamera {
 		})
 	}
 
-	fn get_frames(&mut self) -> Result<Vec<Result<CameraFrame, CaptureError>>, CaptureError> {
+	fn get_frames(
+		&mut self,
+		buf: &mut Vec<Result<CameraFrame, CaptureError>>,
+	) -> Result<(), CaptureError> {
 		if self.timer.interval(Duration::from_secs_f32(self.interval)) {
 			let timestamp = SystemTime::now()
 				.duration_since(UNIX_EPOCH)
 				.unwrap_or_default()
 				.as_millis();
-			Ok(vec![Ok(CameraFrame {
+
+			buf.push(Ok(CameraFrame {
 				timestamp,
 				image: self.image.clone(),
-			})])
-		} else {
-			Ok(Vec::new())
+			}));
 		}
+
+		Ok(())
 	}
 }

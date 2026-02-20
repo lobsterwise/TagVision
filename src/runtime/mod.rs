@@ -36,12 +36,8 @@ impl Runtime {
 
 		// Set up all the channels
 
-		let (vision_runtime, output_receiver) = VisionRuntime::new(
-			&config.detector_params,
-			&config.runtime,
-			&config.tags,
-			&layout,
-		);
+		let (vision_runtime, output_receiver) =
+			VisionRuntime::new(&config.detector_params, &config.tags, &layout);
 
 		let output = Output::new(
 			output_receiver,
@@ -117,35 +113,45 @@ impl Runtime {
 			}
 		}
 
-		// Get camera frames from modules
+		// Get camera frames from modules and check for restarts
 		for (module_id, module) in &mut self.modules {
+			let intrinsics = module.get_intrinsics().clone();
+
+			// Get and send frames
 			let frames = module.get_frames();
-			match frames {
-				Ok(frames) => {
-					for frame in frames {
-						match frame {
-							Ok(frame) => {
-								if let Err(e) = self
-									.vision_runtime
-									.send(VisionThreadInput {
-										module: module_id.clone(),
-										frame,
-										intrinsics: module.get_intrinsics().clone(),
-									})
-									.await
-								{
-									eprintln!("Vision thread not available: {e}");
-								}
-							}
-							Err(e) => {
-								eprintln!("Frame error for module '{module_id}': {e}");
-							}
-						}
-					}
-				}
+			let frames = match frames {
+				Ok(frames) => frames,
 				Err(e) => {
 					eprintln!("Failed to get frames from module '{module_id}': {e}");
+					continue;
 				}
+			};
+
+			for frame in frames {
+				let frame = match frame {
+					Ok(frame) => frame,
+					Err(e) => {
+						eprintln!("Frame error for module '{module_id}': {e}");
+						continue;
+					}
+				};
+
+				if let Err(e) = self
+					.vision_runtime
+					.send(VisionThreadInput {
+						module: module_id.clone(),
+						frame: frame.clone(),
+						intrinsics: intrinsics.clone(),
+					})
+					.await
+				{
+					eprintln!("Vision thread not available: {e}");
+				}
+			}
+
+			// Self check
+			if module.self_check() {
+				self.uninitialized_modules.insert(module_id.clone());
 			}
 		}
 	}

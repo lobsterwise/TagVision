@@ -129,13 +129,15 @@ impl CameraBackend for GStreamerCamera {
 		Ok(Self { bus, queue })
 	}
 
-	fn get_frames(&mut self) -> Result<Vec<Result<CameraFrame, CaptureError>>, CaptureError> {
-		let mut out = Vec::new();
+	fn get_frames(
+		&mut self,
+		buf: &mut Vec<Result<CameraFrame, CaptureError>>,
+	) -> Result<(), CaptureError> {
 		while let Some(frame) = self.queue.pop() {
-			out.push(frame);
+			buf.push(frame);
 		}
 
-		Ok(out)
+		Ok(())
 	}
 }
 

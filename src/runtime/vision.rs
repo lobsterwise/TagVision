@@ -2,7 +2,7 @@ use tokio::sync::mpsc::{error::SendError, Receiver, Sender};
 
 use crate::{
 	cam::CameraFrame,
-	config::{RuntimeConfig, TagConfig},
+	config::TagConfig,
 	cv::{
 		apriltag::{
 			layout::AprilTagLayout, params::AprilTagDetectorParams, AprilTagDetections,
@@ -25,7 +25,6 @@ impl VisionRuntime {
 	/// Creates a new VisionRuntime, also returning the receiver for vision outputs
 	pub fn new(
 		params: &AprilTagDetectorParams,
-		runtime_config: &RuntimeConfig,
 		tag_config: &TagConfig,
 		layout: &AprilTagLayout,
 	) -> (Self, Receiver<VisionOutput>) {
@@ -41,7 +40,6 @@ impl VisionRuntime {
 				receiver,
 				output_sender.clone(),
 				params.clone(),
-				runtime_config.clone(),
 				layout.clone(),
 				tag_config.tag_size,
 			);
@@ -83,7 +81,6 @@ pub struct VisionThread {
 	input: Receiver<VisionThreadInput>,
 	output: Sender<VisionOutput>,
 	params: AprilTagDetectorParams,
-	runtime_config: RuntimeConfig,
 	layout: AprilTagLayout,
 	tag_size: f64,
 }
@@ -93,7 +90,6 @@ impl VisionThread {
 		input_channel: Receiver<VisionThreadInput>,
 		output_channel: Sender<VisionOutput>,
 		params: AprilTagDetectorParams,
-		runtime_config: RuntimeConfig,
 		layout: AprilTagLayout,
 		tag_size: f64,
 	) -> Self {
@@ -101,7 +97,6 @@ impl VisionThread {
 			input: input_channel,
 			output: output_channel,
 			params,
-			runtime_config,
 			layout,
 			tag_size,
 		}
@@ -111,23 +106,14 @@ impl VisionThread {
 		let detector = AprilTagDetector::new(self.params.clone());
 		loop {
 			self.run(&detector).await;
-			// tokio::time::sleep(Duration::from_secs_f32(
-			// 	self.runtime_config
-			// 		.update_rate
-			// 		.unwrap_or(DEFAULT_UPDATE_RATE)
-			// 		/ 1000.0,
-			// ))
-			// .await;
 		}
 	}
 
 	async fn run(&mut self, detector: &AprilTagDetector) {
 		if let Some(input) = self.input.recv().await {
 			let detections = detector.detect_markers(&input.frame.image);
-			// dbg!(&detections);
 
 			let pose = solve_tags(&detections, &input.intrinsics, &self.layout, self.tag_size);
-			// dbg!(&pose);
 			if let Some(pose) = pose {
 				let update = PoseUpdate {
 					pose,
@@ -163,10 +149,7 @@ fn solve_tags(
 			continue;
 		};
 
-		// dbg!(&detection.corners);
-		// dbg!(&intrinsics);
 		let undistorted = detection.get_undistorted_corners(intrinsics);
-		// dbg!(&undistorted);
 		let solution = solver.solve(tag_corners_3d, undistorted);
 		let Some(solution) = solution else {
 			continue;

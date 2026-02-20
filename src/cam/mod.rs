@@ -1,7 +1,7 @@
+use std::sync::Arc;
+
 use fake::FakeCamera;
-use gstreamer::GStreamerCamera;
 use image::GrayImage;
-use uvc::UVCCamera;
 
 use crate::config::{CameraBackendOption, CameraConfig, RuntimeConfig};
 
@@ -10,46 +10,69 @@ pub mod fake;
 /// GStreamer camera capture
 #[cfg(feature = "gstreamer")]
 pub mod gstreamer;
+/// Native camera capture using nokhwa
+#[cfg(feature = "native")]
+pub mod native;
 /// Bare UVC camera capture
 #[cfg(feature = "uvc")]
 pub mod uvc;
 
 /// A camera that implements a backend
 pub struct Camera {
-	backend: Box<dyn CameraBackend>,
 	config: CameraConfig,
+	runtime_config: RuntimeConfig,
+	backend: Box<dyn CameraBackend>,
+	frame_buffer: Vec<Result<CameraFrame, CaptureError>>,
+	/// Number of errors in consecutive frames since the last restart
+	frame_error_count: u32,
+	max_frame_errors: u32,
 }
 
 impl Camera {
+	/// Initializes this camera from configuration
 	pub fn from_config(
 		config: CameraConfig,
 		runtime_config: &RuntimeConfig,
+		max_frame_errors: u32,
 	) -> Result<Self, CameraSetupError> {
-		let backend: Box<dyn CameraBackend> = match config.backend {
-			CameraBackendOption::UVC => {
-				if cfg!(feature = "uvc") {
-					#[cfg(feature = "uvc")]
-					Box::new(UVCCamera::init(&config, runtime_config)?)
-				} else {
-					return Err(CameraSetupError::BackendMissing);
-				}
-			}
-			CameraBackendOption::GStreamer => {
-				if cfg!(feature = "gstreamer") {
-					#[cfg(feature = "gstreamer")]
-					Box::new(GStreamerCamera::init(&config, runtime_config)?)
-				} else {
-					return Err(CameraSetupError::BackendMissing);
-				}
-			}
-			CameraBackendOption::Fake => Box::new(FakeCamera::init(&config, runtime_config)?),
-		};
-
-		Ok(Self { backend, config })
+		Ok(Self {
+			backend: get_backend(&config, runtime_config)?,
+			config,
+			runtime_config: runtime_config.clone(),
+			frame_buffer: Vec::new(),
+			frame_error_count: 0,
+			max_frame_errors,
+		})
 	}
 
-	pub fn get_frames(&mut self) -> Result<Vec<Result<CameraFrame, CaptureError>>, CaptureError> {
-		self.backend.get_frames()
+	/// Gets the next available frames from the camera
+	pub fn get_frames(&mut self) -> Result<&Vec<Result<CameraFrame, CaptureError>>, CaptureError> {
+		self.frame_buffer.clear();
+		self.backend.get_frames(&mut self.frame_buffer)?;
+
+		for result in &self.frame_buffer {
+			if result.is_err() {
+				self.frame_error_count += 1;
+			} else {
+				self.frame_error_count = 0;
+			}
+		}
+
+		Ok(&self.frame_buffer)
+	}
+
+	/// Checks this camera and returns whether it needs a restart
+	pub fn self_check(&mut self) -> bool {
+		if self.frame_error_count > self.max_frame_errors {
+			true
+		} else {
+			if let Some(err) = self.backend.self_check() {
+				eprintln!("Camera error: {err}");
+				true
+			} else {
+				false
+			}
+		}
 	}
 }
 
@@ -63,14 +86,58 @@ pub trait CameraBackend {
 	where
 		Self: Sized;
 
-	/// Gets all new frames from the camera
-	fn get_frames(&mut self) -> Result<Vec<Result<CameraFrame, CaptureError>>, CaptureError>;
+	/// Gets all new frames from the camera. The provided buffer will be empty.
+	fn get_frames(
+		&mut self,
+		buf: &mut Vec<Result<CameraFrame, CaptureError>>,
+	) -> Result<(), CaptureError>;
+
+	/// Checks for an extra setup error if available to automatically restart the camera
+	fn self_check(&mut self) -> Option<CameraSetupError> {
+		None
+	}
 }
 
 /// A single timestamped camera frame
+#[derive(Clone)]
 pub struct CameraFrame {
 	pub timestamp: u128,
-	pub image: GrayImage,
+	pub image: Arc<GrayImage>,
+}
+
+fn get_backend(
+	config: &CameraConfig,
+	runtime_config: &RuntimeConfig,
+) -> Result<Box<dyn CameraBackend>, CameraSetupError> {
+	match config.backend {
+		CameraBackendOption::Native => {
+			#[cfg(feature = "native")]
+			return Ok(Box::new(native::NativeCamera::init(
+				config,
+				runtime_config,
+			)?));
+			#[cfg(not(feature = "native"))]
+			return Err(CameraSetupError::BackendMissing);
+		}
+		CameraBackendOption::UVC => {
+			#[cfg(feature = "uvc")]
+			return Ok(Box::new(uvc::UVCCamera::init(config, runtime_config)?));
+			#[cfg(not(feature = "uvc"))]
+			return Err(CameraSetupError::BackendMissing);
+		}
+		CameraBackendOption::GStreamer => {
+			#[cfg(feature = "gstreamer")]
+			return Ok(Box::new(gstreamer::GStreamerCamera::init(
+				config,
+				runtime_config,
+			)?));
+			#[cfg(not(feature = "gstreamer"))]
+			return Err(CameraSetupError::BackendMissing);
+		}
+		CameraBackendOption::Fake => {
+			return Ok(Box::new(FakeCamera::init(config, runtime_config)?))
+		}
+	}
 }
 
 /// Different errors for camera creation

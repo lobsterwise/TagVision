@@ -2,7 +2,10 @@ use std::collections::HashMap;
 
 use serde::Deserialize;
 
-use crate::cv::{apriltag::{layout::AprilTagLayoutPreset, params::AprilTagDetectorParams}, distort::CameraCalibration};
+use crate::cv::{
+	apriltag::{layout::AprilTagLayoutPreset, params::AprilTagDetectorParams},
+	distort::CameraCalibration,
+};
 
 /// Configuration for the whole program
 #[derive(Deserialize)]
@@ -57,6 +60,8 @@ pub struct ModuleConfig {
 	pub id: String,
 	/// Configuration for the module's camera
 	pub camera: CameraConfig,
+	/// Maximum number of frame errors before the camera is restarted
+	pub max_errors: u32,
 }
 
 /// Configuration for a module's camera
@@ -97,8 +102,10 @@ pub struct CameraConfig {
 /// Different backend implementations for cameras
 #[derive(Deserialize, Default, Clone, Copy)]
 pub enum CameraBackendOption {
-	#[serde(rename = "uvc")]
+	#[serde(rename = "native")]
 	#[default]
+	Native,
+	#[serde(rename = "uvc")]
 	UVC,
 	#[serde(rename = "gstreamer")]
 	GStreamer,

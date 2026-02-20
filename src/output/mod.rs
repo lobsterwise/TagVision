@@ -190,7 +190,7 @@ impl OutputThread {
 pub struct VisionOutput {
 	pub module: String,
 	pub update: PoseUpdate,
-	pub frame: Option<GrayImage>,
+	pub frame: Option<Arc<GrayImage>>,
 	pub detections: Vec<AprilTagDetection>,
 }
 
