@@ -90,6 +90,12 @@ impl Runtime {
 					continue;
 				};
 
+				// Disabled modules
+				if config.disabled {
+					to_remove.insert(module_id.clone());
+					continue;
+				}
+
 				let result = Module::init(config.clone(), &self.config.runtime);
 				let module = match result {
 					Ok(module) => module,

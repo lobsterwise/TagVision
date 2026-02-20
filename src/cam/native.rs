@@ -7,7 +7,7 @@ use crossbeam_queue::ArrayQueue;
 use nokhwa::{
 	pixel_format::LumaFormat,
 	utils::{
-		CameraFormat, CameraIndex, ControlValueSetter, FrameFormat, KnownCameraControl,
+		ApiBackend, CameraFormat, CameraIndex, ControlValueSetter, FrameFormat, KnownCameraControl,
 		RequestedFormat, RequestedFormatType, Resolution,
 	},
 	Camera, NokhwaError,
@@ -42,6 +42,13 @@ impl CameraBackend for NativeCamera {
 			camera_format,
 		));
 
+		#[cfg(target_os = "linux")]
+		let backend = ApiBackend::Video4Linux;
+		#[cfg(target_os = "windows")]
+		let backend = ApiBackend::MediaFoundation;
+		#[cfg(target_os = "macos")]
+		let backend = ApiBackend::AVFoundation;
+
 		// Setup queue and camera thread
 		let queue = Arc::new(ArrayQueue::new(
 			runtime_config
@@ -55,7 +62,7 @@ impl CameraBackend for NativeCamera {
 			let config = config.clone();
 			let queue = queue.clone();
 			tokio::spawn(async move {
-				let camera = Camera::new(index, format);
+				let camera = Camera::with_backend(index, format, backend);
 				let mut camera = match camera {
 					Ok(camera) => camera,
 					Err(e) => {

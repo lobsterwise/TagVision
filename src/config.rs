@@ -56,12 +56,18 @@ pub struct TagConfig {
 /// Configuration for a single camera module
 #[derive(Deserialize, Clone)]
 pub struct ModuleConfig {
-	/// The ID for the module, used to identify it in logs and network tables
-	pub id: String,
 	/// Configuration for the module's camera
 	pub camera: CameraConfig,
 	/// Maximum number of frame errors before the camera is restarted
+	#[serde(default = "default_max_errors")]
 	pub max_errors: u32,
+	/// Whether to temporarily disable this module, for testing
+	#[serde(default)]
+	pub disabled: bool,
+}
+
+fn default_max_errors() -> u32 {
+	5
 }
 
 /// Configuration for a module's camera
