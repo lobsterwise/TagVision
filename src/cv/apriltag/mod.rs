@@ -4,7 +4,7 @@ pub mod params;
 
 use ffi::*;
 use imageproc::pixelops::interpolate;
-use std::fmt::Debug;
+use std::{fmt::Debug, sync::Arc};
 
 use image::{GrayImage, Rgb, RgbImage};
 use nalgebra::{Matrix2x4, Matrix3x4, Matrix4x2, Vector2};
@@ -12,13 +12,18 @@ use params::AprilTagDetectorParams;
 
 use super::distort::OpenCVCameraIntrinsics;
 
+/// Wrapper around the AprilTag library for detecting AprilTags
 pub struct AprilTagDetector {
+	inner: Arc<AprilTagDetectorInner>,
+}
+
+struct AprilTagDetectorInner {
 	inner: *mut _AprilTagDetector,
 	family: *mut _AprilTagFamily,
 }
 
-unsafe impl Send for AprilTagDetector {}
-unsafe impl Sync for AprilTagDetector {}
+unsafe impl Send for AprilTagDetectorInner {}
+unsafe impl Sync for AprilTagDetectorInner {}
 
 impl AprilTagDetector {
 	pub fn new(params: AprilTagDetectorParams) -> Self {
@@ -35,38 +40,37 @@ impl AprilTagDetector {
 
 			(inner, family)
 		};
-		Self { inner, family }
+
+		let inner = Arc::new(AprilTagDetectorInner { inner, family });
+
+		Self { inner }
 	}
 
 	/// Detect markers in an image
-	pub fn detect_markers(&self, image: &GrayImage) -> AprilTagDetections {
+	pub async fn detect_markers(&self, image: &Arc<GrayImage>) -> AprilTagDetections {
 		let width = image.width() as i32;
 		let height = image.height() as i32;
-		let image = _ImageU8 {
-			width,
-			height,
-			stride: width,
-			buf: image.as_ptr() as *mut u8,
-		};
 
-		let raw_detections = unsafe { apriltag_detector_detect(self.inner, &image) };
+		let inner = self.inner.clone();
+		let image = image.clone();
 
-		AprilTagDetections {
-			detections: raw_detections,
-		}
-	}
+		let result = tokio::task::spawn_blocking(move || {
+			let image = _ImageU8 {
+				width,
+				height,
+				stride: width,
+				buf: image.as_ptr() as *mut u8,
+			};
+			let detections = unsafe { apriltag_detector_detect(inner.inner, &image) };
+			AprilTagDetections { detections }
+		})
+		.await;
 
-	pub fn debug(&self) {
-		dbg!(&self);
-		unsafe {
-			if !(*self.inner).wp.is_null() {
-				dbg!(&(*(*self.inner).wp));
-			}
-			let family = (*(*self.inner).tag_families)
-				.get::<*mut _AprilTagFamily>(0)
-				.map(|x| (*(*x)).clone());
-			dbg!(family);
-			(*(*self.inner).tp).report();
+		match result {
+			Ok(result) => result,
+			Err(..) => AprilTagDetections {
+				detections: std::ptr::null_mut(),
+			},
 		}
 	}
 }
@@ -74,15 +78,15 @@ impl AprilTagDetector {
 impl Drop for AprilTagDetector {
 	fn drop(&mut self) {
 		unsafe {
-			apriltag_detector_destroy(self.inner);
-			tag36h11_destroy(self.family);
+			apriltag_detector_destroy(self.inner.inner);
+			tag36h11_destroy(self.inner.family);
 		}
 	}
 }
 
 impl Debug for AprilTagDetector {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-		unsafe { write!(f, "{:?}", *self.inner) }
+		unsafe { write!(f, "{:?}", *self.inner.inner) }
 	}
 }
 
@@ -127,13 +131,6 @@ impl AprilTagDetections {
 	/// Gets the size of the detections
 	pub fn size(&self) -> usize {
 		unsafe { (*self.detections).size as usize }
-	}
-
-	/// Draws these detections on an image
-	pub fn draw(&self, image: &mut RgbImage) {
-		for detection in self.iter() {
-			detection.draw(image);
-		}
 	}
 
 	/// Gets these detections as a vector

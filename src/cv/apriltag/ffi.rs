@@ -183,21 +183,35 @@ pub struct _ZArray {
 }
 
 impl _ZArray {
+	/// Gets the size of the array
+	pub fn size(&self) -> usize {
+		if self.data.is_null() {
+			0
+		} else {
+			self.size as usize
+		}
+	}
+
+	/// Gets an element at the specified position
 	pub unsafe fn get<'a, T>(&'a self, index: usize) -> Option<&'a T> {
-		let size = self.size as usize;
+		let size = self.size();
 
 		if index >= size {
 			return None;
 		}
 
 		let data = self.data as *mut T;
+		if data.is_null() {
+			return None;
+		}
 		let data = std::slice::from_raw_parts(data, size);
 
 		Some(&data[index])
 	}
 
+	/// Iterates over elements of the vector
 	pub unsafe fn iter<'a, T: 'a>(&'a self) -> impl Iterator<Item = &'a T> + 'a {
-		(0..self.size as usize).map(|x| unsafe { self.get(x).unwrap_unchecked() })
+		(0..self.size()).map(|x| unsafe { self.get(x).unwrap_unchecked() })
 	}
 }
 

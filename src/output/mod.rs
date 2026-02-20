@@ -14,7 +14,7 @@ use nt_client::{publish::NewPublisherError, ClientHandle, NewClientOptions};
 use tokio::sync::{mpsc::Receiver, Mutex};
 
 use crate::{
-	config::{NetworkConfig, RuntimeConfig, DEFAULT_UPDATE_RATE},
+	config::NetworkConfig,
 	cv::{
 		apriltag::AprilTagDetection,
 		geom::PoseUpdate,
@@ -25,7 +25,6 @@ use crate::{
 };
 
 static BASE_TABLE: &str = "TagVision";
-const DEFAULT_RECONNECT_INTERVAL: Duration = Duration::from_secs(2);
 
 /// Handles NetworkTables and CameraServer
 pub struct Output {}
@@ -34,7 +33,6 @@ impl Output {
 	pub async fn new(
 		input: Receiver<VisionOutput>,
 		network_config: NetworkConfig,
-		runtime_config: RuntimeConfig,
 		modules: &HashSet<String>,
 	) -> Self {
 		let addr = if let Some(address) = &network_config.address {
@@ -45,10 +43,7 @@ impl Output {
 			panic!("No address provided")
 		};
 
-		let reconnect_interval = network_config
-			.reconnect_interval
-			.map(Duration::from_secs_f32)
-			.unwrap_or(DEFAULT_RECONNECT_INTERVAL);
+		let reconnect_interval = Duration::from_secs_f32(network_config.reconnect_interval);
 
 		let fps_pub = Arc::new(Mutex::new(None));
 		let output_modules = Arc::new(Mutex::new(HashMap::new()));
@@ -107,13 +102,14 @@ impl Output {
 
 		let thread_data = OutputThread {
 			input,
-			runtime_config,
 			fps_timer: Timer::new(),
 			event_count: 0,
 			detection_count: 0,
 			image_allocator: ImageAllocator::new(),
 			output_modules,
 			fps_pub,
+			detection_time_sum: 0.0,
+			estimation_time_sum: 0.0,
 		};
 
 		tokio::spawn(thread_data.run_forever());
@@ -124,7 +120,6 @@ impl Output {
 
 /// Data contained on the output task
 struct OutputThread {
-	runtime_config: RuntimeConfig,
 	image_allocator: ImageAllocator,
 	// Input
 	input: Receiver<VisionOutput>,
@@ -135,19 +130,14 @@ struct OutputThread {
 	fps_timer: Timer,
 	event_count: u16,
 	detection_count: u16,
+	detection_time_sum: f32,
+	estimation_time_sum: f32,
 }
 
 impl OutputThread {
 	async fn run_forever(mut self) {
 		loop {
 			self.run().await;
-			tokio::time::sleep(Duration::from_secs_f32(
-				self.runtime_config
-					.update_rate
-					.unwrap_or(DEFAULT_UPDATE_RATE)
-					/ 1000.0,
-			))
-			.await;
 		}
 	}
 
@@ -174,6 +164,8 @@ impl OutputThread {
 			}
 
 			self.event_count += 1;
+			self.detection_time_sum += output.detection_time;
+			self.estimation_time_sum += output.estimation_time;
 		}
 
 		// Calculate stats
@@ -182,20 +174,37 @@ impl OutputThread {
 			.fps_timer
 			.interval(Duration::from_secs_f32(stats_interval))
 		{
-			let fps = self.event_count as f32 / stats_interval;
+			let event_count_f32 = self.event_count as f32;
+			let fps = event_count_f32 / stats_interval;
 			let detection_ratio = if self.event_count == 0 {
 				0.0
 			} else {
-				self.detection_count as f32 / self.event_count as f32
+				self.detection_count as f32 / event_count_f32
+			};
+
+			let (detection_time, estimation_time) = if self.event_count == 0 {
+				(0.0, 0.0)
+			} else {
+				(
+					self.detection_time_sum / event_count_f32,
+					self.estimation_time_sum / event_count_f32,
+				)
 			};
 
 			self.event_count = 0;
 			self.detection_count = 0;
+			self.detection_time_sum = 0.0;
+			self.estimation_time_sum = 0.0;
 
 			if let Ok(Some(lock)) = self.fps_pub.try_lock().as_deref_mut() {
 				lock.publish(fps as f64).await;
 			}
-			println!("FPS: {fps:.3}; Detection %: {:.3}", detection_ratio * 100.0);
+			println!(
+				"FPS: {fps:.3}; Detection %: {:.2}; Detection Time: {:.1}ms; Estimation Time: {:.1}ms",
+				detection_ratio * 100.0,
+				detection_time * 1000.0,
+				estimation_time * 1000.0,
+			);
 		}
 	}
 }
@@ -206,6 +215,8 @@ pub struct VisionOutput {
 	pub update: Option<PoseUpdate>,
 	pub frame: Option<Arc<GrayImage>>,
 	pub detections: Vec<AprilTagDetection>,
+	pub detection_time: f32,
+	pub estimation_time: f32,
 }
 
 /// NT pub/sub for a module

@@ -1,4 +1,9 @@
-use tokio::sync::mpsc::{error::SendError, Receiver, Sender};
+use std::sync::Arc;
+
+use tokio::sync::{
+	mpsc::{self, error::TrySendError},
+	Mutex,
+};
 
 use crate::{
 	cam::CameraFrame,
@@ -13,12 +18,14 @@ use crate::{
 		solve::{p3p::P3P, PnPSolver},
 	},
 	output::VisionOutput,
+	util::Timer,
 };
+
+const QUEUE_SIZE: usize = 1;
 
 /// A load balancer for multiple vision threads
 pub struct VisionRuntime {
-	senders: Vec<Sender<VisionThreadInput>>,
-	index: usize,
+	sender: mpsc::Sender<VisionThreadInput>,
 }
 
 impl VisionRuntime {
@@ -27,17 +34,18 @@ impl VisionRuntime {
 		params: &AprilTagDetectorParams,
 		tag_config: &TagConfig,
 		layout: &AprilTagLayout,
-	) -> (Self, Receiver<VisionOutput>) {
+	) -> (Self, mpsc::Receiver<VisionOutput>) {
 		// Create the output channel
-		let (output_sender, output_receiver) = tokio::sync::mpsc::channel::<VisionOutput>(1);
+		let (output_sender, output_receiver) = mpsc::channel::<VisionOutput>(3);
 		// Create the channel inputs to the vision threads
-		let runtime_count = 2;
-		let mut senders = Vec::with_capacity(runtime_count);
-		for _ in 0..runtime_count {
-			let (sender, receiver) = tokio::sync::mpsc::channel::<VisionThreadInput>(1);
+		let runtime_count = 4;
+		let (sender, receiver) = mpsc::channel::<VisionThreadInput>(QUEUE_SIZE);
 
+		let receiver = Arc::new(Mutex::new(receiver));
+
+		for _ in 0..runtime_count {
 			let vision_thread_data = VisionThread::new(
-				receiver,
+				receiver.clone(),
 				output_sender.clone(),
 				params.clone(),
 				layout.clone(),
@@ -45,11 +53,9 @@ impl VisionRuntime {
 			);
 
 			tokio::spawn(vision_thread_data.run_forever());
-
-			senders.push(sender);
 		}
 
-		let out = Self { senders, index: 0 };
+		let out = Self { sender };
 
 		(out, output_receiver)
 	}
@@ -58,12 +64,9 @@ impl VisionRuntime {
 	pub async fn send(
 		&mut self,
 		input: VisionThreadInput,
-	) -> Result<(), SendError<VisionThreadInput>> {
-		self.index += 1;
-		self.index %= self.senders.len();
-
-		if self.senders.len() != 0 {
-			self.senders[self.index].send(input).await
+	) -> Result<(), mpsc::error::TrySendError<VisionThreadInput>> {
+		if let e @ Err(TrySendError::Closed(..)) = self.sender.try_send(input) {
+			e
 		} else {
 			Ok(())
 		}
@@ -71,6 +74,7 @@ impl VisionRuntime {
 }
 
 /// Input to the vision thread
+#[derive(Clone)]
 pub struct VisionThreadInput {
 	pub module: String,
 	pub frame: CameraFrame,
@@ -79,8 +83,8 @@ pub struct VisionThreadInput {
 
 /// Data contained on the vision task
 pub struct VisionThread {
-	input: Receiver<VisionThreadInput>,
-	output: Sender<VisionOutput>,
+	input: Arc<Mutex<mpsc::Receiver<VisionThreadInput>>>,
+	output: mpsc::Sender<VisionOutput>,
 	params: AprilTagDetectorParams,
 	layout: AprilTagLayout,
 	tag_size: f64,
@@ -88,8 +92,8 @@ pub struct VisionThread {
 
 impl VisionThread {
 	fn new(
-		input_channel: Receiver<VisionThreadInput>,
-		output_channel: Sender<VisionOutput>,
+		input_channel: Arc<Mutex<mpsc::Receiver<VisionThreadInput>>>,
+		output_channel: mpsc::Sender<VisionOutput>,
 		params: AprilTagDetectorParams,
 		layout: AprilTagLayout,
 		tag_size: f64,
@@ -104,6 +108,7 @@ impl VisionThread {
 	}
 
 	async fn run_forever(mut self) {
+		// We must initialize it here since it is not Send
 		let detector = AprilTagDetector::new(self.params.clone());
 		loop {
 			self.run(&detector).await;
@@ -111,10 +116,22 @@ impl VisionThread {
 	}
 
 	async fn run(&mut self, detector: &AprilTagDetector) {
-		if let Some(input) = self.input.recv().await {
-			let detections = detector.detect_markers(&input.frame.image);
+		let input = {
+			let mut lock = self.input.lock().await;
 
+			// It is OK to lock and await here as the tokio mutex is fair and will give to the next available task
+			lock.recv().await
+		};
+
+		if let Some(input) = input {
+			let mut timer = Timer::new();
+			let detections = detector.detect_markers(&input.frame.image).await;
+			let detection_time = timer.get_elapsed();
+
+			timer.restart();
 			let pose = solve_tags(&detections, &input.intrinsics, &self.layout, self.tag_size);
+			let estimation_time = timer.get_elapsed();
+
 			let update = pose.map(|pose| PoseUpdate {
 				pose,
 				timestamp: input.frame.timestamp,
@@ -125,6 +142,8 @@ impl VisionThread {
 				update,
 				frame: Some(input.frame.image),
 				detections: detections.to_vec(),
+				detection_time: detection_time.as_secs_f32(),
+				estimation_time: estimation_time.as_secs_f32(),
 			};
 
 			if let Err(e) = self.output.send(output).await {
@@ -140,6 +159,10 @@ fn solve_tags(
 	layout: &AprilTagLayout,
 	tag_size: f64,
 ) -> Option<Pose3D> {
+	if detections.size() == 0 {
+		return None;
+	}
+
 	let mut solver = P3P::new(intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy);
 	let mut solved_poses = Vec::new();
 	for detection in detections.iter() {
@@ -155,9 +178,6 @@ fn solve_tags(
 		};
 
 		match solution {
-			PnPSolution::Single(pose) => {
-				solved_poses.push(pose.pose);
-			}
 			PnPSolution::Multi(poses) => {
 				let pose_with_min_err = poses.into_iter().min_by(|x, y| {
 					x.error

@@ -3,7 +3,6 @@ use std::{
 	time::{SystemTime, UNIX_EPOCH},
 };
 
-use crossbeam_queue::ArrayQueue;
 use nokhwa::{
 	pixel_format::LumaFormat,
 	utils::{
@@ -12,14 +11,16 @@ use nokhwa::{
 	},
 	Camera, NokhwaError,
 };
-use tokio::sync::oneshot;
+use tokio::sync::{mpsc, oneshot};
 
-use crate::config::{CameraConfig, RuntimeConfig, DEFAULT_QUEUE_SIZE};
+use crate::{
+	cam::FrameResult,
+	config::{CameraConfig, RuntimeConfig},
+};
 
 use super::{CameraBackend, CameraFrame, CameraSetupError, CaptureError};
 
 pub struct NativeCamera {
-	queue: Arc<ArrayQueue<Result<CameraFrame, CaptureError>>>,
 	capture_error: oneshot::Receiver<CameraSetupError>,
 }
 
@@ -27,7 +28,10 @@ impl CameraBackend for NativeCamera {
 	fn init(
 		config: &CameraConfig,
 		runtime_config: &RuntimeConfig,
+		frame_tx: mpsc::Sender<FrameResult>,
 	) -> Result<Self, CameraSetupError> {
+		let _ = runtime_config;
+
 		// Camera setup
 		let index = if let Ok(index) = config.device_id.parse() {
 			CameraIndex::Index(index)
@@ -49,18 +53,11 @@ impl CameraBackend for NativeCamera {
 		#[cfg(target_os = "macos")]
 		let backend = ApiBackend::AVFoundation;
 
-		// Setup queue and camera thread
-		let queue = Arc::new(ArrayQueue::new(
-			runtime_config
-				.camera_queue_size
-				.unwrap_or(DEFAULT_QUEUE_SIZE) as usize,
-		));
-
+		// Setup camera thread
 		let (error_tx, error_rx) = oneshot::channel::<CameraSetupError>();
 
 		{
 			let config = config.clone();
-			let queue = queue.clone();
 			tokio::spawn(async move {
 				let camera = Camera::with_backend(index, format, backend);
 				let mut camera = match camera {
@@ -154,26 +151,14 @@ impl CameraBackend for NativeCamera {
 						})
 					});
 
-					let _ = queue.push(frame);
+					let _ = frame_tx.try_send(frame);
 				}
 			});
 		}
 
 		Ok(Self {
-			queue,
 			capture_error: error_rx,
 		})
-	}
-
-	fn get_frames(
-		&mut self,
-		buf: &mut Vec<Result<CameraFrame, CaptureError>>,
-	) -> Result<(), CaptureError> {
-		while let Some(frame) = self.queue.pop() {
-			buf.push(frame);
-		}
-
-		Ok(())
 	}
 
 	fn self_check(&mut self) -> Option<CameraSetupError> {

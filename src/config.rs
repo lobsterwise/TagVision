@@ -40,8 +40,12 @@ pub struct NetworkConfig {
 	#[serde(default)]
 	pub disabled: bool,
 	/// Time to wait between reconnects, in seconds
-	#[serde(default)]
-	pub reconnect_interval: Option<f32>,
+	#[serde(default = "default_reconnect_interval")]
+	pub reconnect_interval: f32,
+}
+
+fn default_reconnect_interval() -> f32 {
+	2.0
 }
 
 /// Configuration for the tags
@@ -111,8 +115,6 @@ pub enum CameraBackendOption {
 	#[serde(rename = "native")]
 	#[default]
 	Native,
-	#[serde(rename = "uvc")]
-	UVC,
 	#[serde(rename = "gstreamer")]
 	GStreamer,
 	#[serde(rename = "fake")]
@@ -120,19 +122,29 @@ pub enum CameraBackendOption {
 }
 
 /// Configuration for the runtime
-#[derive(Deserialize, Default, Clone)]
+#[derive(Deserialize, Clone)]
 pub struct RuntimeConfig {
 	/// Specifies how many frames to keep in the camera frame queue before they start to be discarded
-	#[serde(default)]
-	pub camera_queue_size: Option<u8>,
-	/// How often to update the runtime, in milliseconds
-	#[serde(default)]
-	pub update_rate: Option<f32>,
+	#[serde(default = "default_camera_queue_size")]
+	pub camera_queue_size: u8,
 	/// How often to reconnect cameras that have come disconnected, in seconds
-	#[serde(default)]
-	pub reconnect_interval: Option<f32>,
+	#[serde(default = "default_camera_reconnect_interval")]
+	pub camera_reconnect_interval: f32,
 }
 
-pub const DEFAULT_QUEUE_SIZE: u8 = 10;
-pub const DEFAULT_UPDATE_RATE: f32 = 0.01;
-pub const DEFAULT_RECONNECT_INTERVAL: f32 = 1.0;
+impl Default for RuntimeConfig {
+	fn default() -> Self {
+		Self {
+			camera_queue_size: default_camera_queue_size(),
+			camera_reconnect_interval: default_camera_reconnect_interval(),
+		}
+	}
+}
+
+fn default_camera_queue_size() -> u8 {
+	10
+}
+
+fn default_camera_reconnect_interval() -> f32 {
+	1.0
+}

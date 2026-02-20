@@ -1,26 +1,31 @@
-use std::{process::Command, sync::Arc};
+use std::process::Command;
 
-use crossbeam_queue::ArrayQueue;
 use gstreamer::{
 	glib::{object::ObjectExt, ControlFlow},
 	prelude::{ElementExt, GstObjectExt},
 	Bus, MessageView,
 };
+use tokio::sync::mpsc;
 
-use crate::config::{CameraConfig, RuntimeConfig, DEFAULT_QUEUE_SIZE};
+use crate::{
+	cam::FrameResult,
+	config::{CameraConfig, RuntimeConfig},
+};
 
-use super::{CameraBackend, CameraFrame, CameraSetupError, CaptureError};
+use super::{CameraBackend, CameraSetupError, CaptureError};
 
 pub struct GStreamerCamera {
 	bus: Bus,
-	queue: Arc<ArrayQueue<Result<CameraFrame, CaptureError>>>,
 }
 
 impl CameraBackend for GStreamerCamera {
 	fn init(
 		config: &CameraConfig,
 		runtime_config: &RuntimeConfig,
+		frame_tx: mpsc::Sender<FrameResult>,
 	) -> Result<Self, CameraSetupError> {
+		let _ = runtime_config;
+
 		let result = gstreamer::init();
 		if let Err(result) = result {
 			return Err(CameraSetupError::LibraryInitError(result.to_string()));
@@ -85,59 +90,34 @@ impl CameraBackend for GStreamerCamera {
 			return Err(CameraSetupError::StartError(e.to_string()));
 		}
 
-		// Set up the queue and the message handler for the bus
+		let result = bus.add_watch(move |_, msg| match msg.view() {
+			MessageView::Error(err) => {
+				let err = format!(
+					"Error from {:?}: {} ({:?})",
+					err.src().map(|s| s.path_string()),
+					err.error(),
+					err.debug()
+				);
 
-		let queue = Arc::new(ArrayQueue::new(
-			runtime_config
-				.camera_queue_size
-				.unwrap_or(DEFAULT_QUEUE_SIZE) as usize,
-		));
-
-		// Error message queue
-		{
-			let queue = queue.clone();
-
-			let result = bus.add_watch(move |_, msg| match msg.view() {
-				MessageView::Error(err) => {
-					let err = format!(
-						"Error from {:?}: {} ({:?})",
-						err.src().map(|s| s.path_string()),
-						err.error(),
-						err.debug()
-					);
-
-					queue.force_push(Err(CaptureError::GeneralError(err)));
-					ControlFlow::Continue
-				}
-				_ => ControlFlow::Continue,
-			});
-
-			if let Err(e) = result {
-				return Err(CameraSetupError::GeneralError(e.message.to_string()));
+				let _ = frame_tx.try_send(Err(CaptureError::GeneralError(err)));
+				ControlFlow::Continue
 			}
+			_ => ControlFlow::Continue,
+		});
+
+		if let Err(e) = result {
+			return Err(CameraSetupError::GeneralError(e.message.to_string()));
 		}
 
 		// Appsink queue
 		{
-			let queue = queue.clone();
 			pipeline.connect("appsink", true, |data| {
 				// We don't process anything, this is the end of the line
 				None
 			});
 		}
 
-		Ok(Self { bus, queue })
-	}
-
-	fn get_frames(
-		&mut self,
-		buf: &mut Vec<Result<CameraFrame, CaptureError>>,
-	) -> Result<(), CaptureError> {
-		while let Some(frame) = self.queue.pop() {
-			buf.push(frame);
-		}
-
-		Ok(())
+		Ok(Self { bus })
 	}
 }
 

@@ -1,7 +1,4 @@
 /target
-/apriltags.jpg
-/apriltags.pnm
-/apriltags2.jpg
-/apriltags(1).jpg
-/apriltags3.jpg
+/config.json
+/networktables.json
 /callgrind.out.*

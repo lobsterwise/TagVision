@@ -81,26 +81,6 @@ fn rotation_matrix_to_euler(rotation_matrix: Matrix3<f64>) -> (f64, f64, f64) {
 	}
 }
 
-fn euler_to_rotation_matrix(rx: f64, ry: f64, rz: f64) -> Matrix3<f64> {
-	let x_matrix = nalgebra::matrix![
-		1.0, 0.0, 0.0;
-		0.0, rx.cos(), -rx.sin();
-		0.0, rx.sin(), rx.cos()
-	];
-	let y_matrix = nalgebra::matrix![
-		ry.cos(), 0.0, ry.sin();
-		0.0, 1.0, 0.0;
-		-ry.sin(), 0.0, ry.cos()
-	];
-	let z_matrix = nalgebra::matrix![
-		rz.cos(), -rz.sin(), 0.0;
-		rz.sin(), rz.cos(), 0.0;
-		0.0, 0.0, 1.0;
-	];
-
-	x_matrix * y_matrix * z_matrix
-}
-
 /// A 3D pose with a reprojection error
 #[derive(Clone, Debug, Default)]
 pub struct Pose3DWithError {
@@ -111,7 +91,6 @@ pub struct Pose3DWithError {
 /// Solution for solvePnp, either one pose or two
 #[derive(Clone, Debug)]
 pub enum PnPSolution {
-	Single(Pose3DWithError),
 	Multi(Vec<Pose3DWithError>),
 }
 

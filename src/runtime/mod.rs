@@ -3,12 +3,13 @@ use std::{
 	time::Duration,
 };
 
+use tokio::sync::mpsc;
 use vision::{VisionRuntime, VisionThreadInput};
 
 use crate::{
-	config::{Config, DEFAULT_RECONNECT_INTERVAL, DEFAULT_UPDATE_RATE},
+	config::Config,
 	cv::apriltag::layout::AprilTagLayout,
-	module::Module,
+	module::{Module, ModuleErrorOutput, ModuleOutput},
 	output::Output,
 	util::Timer,
 };
@@ -19,6 +20,10 @@ mod vision;
 pub struct Runtime {
 	config: Config,
 	modules: HashMap<String, Module>,
+	module_rx: mpsc::Receiver<ModuleOutput>,
+	module_tx: mpsc::Sender<ModuleOutput>,
+	module_err_rx: mpsc::Receiver<ModuleErrorOutput>,
+	module_err_tx: mpsc::Sender<ModuleErrorOutput>,
 	/// IDs modules that have yet to be initialized
 	uninitialized_modules: HashSet<String>,
 	/// Timer to periodically re-initialize dead modules
@@ -31,6 +36,9 @@ impl Runtime {
 	pub async fn new(config: Config) -> Self {
 		let modules = config.modules.keys().cloned().collect();
 
+		let (module_tx, module_rx) = mpsc::channel(config.runtime.camera_queue_size as usize);
+		let (module_err_tx, module_err_rx) = mpsc::channel(300);
+
 		let layout = AprilTagLayout::load_from_preset(config.tags.layout);
 
 		// Set up all the channels
@@ -38,17 +46,15 @@ impl Runtime {
 		let (vision_runtime, output_receiver) =
 			VisionRuntime::new(&config.detector_params, &config.tags, &layout);
 
-		Output::new(
-			output_receiver,
-			config.network.clone(),
-			config.runtime.clone(),
-			&modules,
-		)
-		.await;
+		Output::new(output_receiver, config.network.clone(), &modules).await;
 
 		Self {
 			config,
 			modules: HashMap::new(),
+			module_rx,
+			module_tx,
+			module_err_rx,
+			module_err_tx,
 			uninitialized_modules: modules,
 			vision_runtime,
 			module_init_timer: Timer::new(),
@@ -57,105 +63,95 @@ impl Runtime {
 
 	/// Run the runtime forever
 	pub async fn run_forever(mut self) {
+		self.initialize_modules().await;
+
 		loop {
 			self.run().await;
-			tokio::time::sleep(Duration::from_secs_f32(
-				self.config
-					.runtime
-					.update_rate
-					.unwrap_or(DEFAULT_UPDATE_RATE)
-					/ 1000.0,
-			))
-			.await;
+		}
+	}
+
+	/// Attempt to initialize any non-running modules
+	pub async fn initialize_modules(&mut self) {
+		let mut to_remove = HashSet::new();
+
+		for module_id in &self.uninitialized_modules {
+			let Some(config) = self.config.modules.get(module_id) else {
+				eprintln!("Uninitialized module '{module_id}' does not exist");
+				continue;
+			};
+
+			// Disabled modules
+			if config.disabled {
+				to_remove.insert(module_id.clone());
+				continue;
+			}
+
+			let result = Module::init(
+				module_id.clone(),
+				config.clone(),
+				&self.config.runtime,
+				self.module_tx.clone(),
+				self.module_err_tx.clone(),
+			);
+			let module = match result {
+				Ok(module) => module,
+				Err(e) => {
+					eprintln!("Failed to start module '{module_id}': {e}");
+					continue;
+				}
+			};
+
+			self.modules.insert(module_id.clone(), module);
+
+			to_remove.insert(module_id.clone());
+			println!("Successfully initialized module '{module_id}'");
+		}
+
+		// Remove the initialized modules from the uninitialized list
+		for module in to_remove {
+			self.uninitialized_modules.remove(&module);
 		}
 	}
 
 	/// Run the runtime
 	pub async fn run(&mut self) {
 		// Attempt to start any modules that haven't yet
-		let reconnect_interval = self
-			.config
-			.runtime
-			.reconnect_interval
-			.unwrap_or(DEFAULT_RECONNECT_INTERVAL);
-		if self
-			.module_init_timer
-			.interval(Duration::from_secs_f32(reconnect_interval))
-		{
-			let mut to_remove = HashSet::new();
-
-			for module_id in &self.uninitialized_modules {
-				let Some(config) = self.config.modules.get(module_id) else {
-					eprintln!("Uninitialized module '{module_id}' does not exist");
-					continue;
-				};
-
-				// Disabled modules
-				if config.disabled {
-					to_remove.insert(module_id.clone());
-					continue;
-				}
-
-				let result = Module::init(config.clone(), &self.config.runtime);
-				let module = match result {
-					Ok(module) => module,
-					Err(e) => {
-						eprintln!("Failed to start module '{module_id}': {e}");
-						continue;
-					}
-				};
-
-				self.modules.insert(module_id.clone(), module);
-
-				to_remove.insert(module_id.clone());
-				println!("Successfully initialized module '{module_id}'");
-			}
-
-			// Remove the initialized modules from the uninitialized list
-			for module in to_remove {
-				self.uninitialized_modules.remove(&module);
-			}
+		let reconnect_interval =
+			Duration::from_secs_f32(self.config.runtime.camera_reconnect_interval);
+		if self.module_init_timer.interval(reconnect_interval) {
+			self.initialize_modules().await;
 		}
 
-		// Get camera frames from modules and check for restarts
-		for (module_id, module) in &mut self.modules {
-			let intrinsics = module.get_intrinsics().clone();
-
-			// Get and send frames
-			let frames = module.get_frames();
-			let frames = match frames {
-				Ok(frames) => frames,
-				Err(e) => {
-					eprintln!("Failed to get frames from module '{module_id}': {e}");
-					continue;
-				}
-			};
-
-			for frame in frames {
-				let frame = match frame {
-					Ok(frame) => frame,
-					Err(e) => {
-						eprintln!("Frame error for module '{module_id}': {e}");
-						continue;
-					}
-				};
-
-				if let Err(e) = self
-					.vision_runtime
-					.send(VisionThreadInput {
-						module: module_id.clone(),
-						frame: frame.clone(),
-						intrinsics: intrinsics.clone(),
-					})
-					.await
-				{
-					eprintln!("Vision thread not available: {e}");
+		// Get and send frames, selecting to ensure that we don't block on getting frames
+		// when the modules are all dead and we won't receive any
+		tokio::select! {
+			output = self.module_rx.recv() => {
+				if let Some(output) = output {
+					match output.frame {
+						Ok(frame) => {
+							if let Err(e) = self
+								.vision_runtime
+								.send(VisionThreadInput {
+									module: output.module_id,
+									frame: frame,
+									intrinsics: output.intrinsics,
+								})
+								.await
+							{
+								eprintln!("Vision thread not available: {e}");
+							}
+						}
+						Err(e) => {
+							eprintln!("Frame error for module '{}': {e}", output.module_id);
+						}
+					};
 				}
 			}
-
-			// Self check
-			if module.self_check() {
-				self.uninitialized_modules.insert(module_id.clone());
+			output = self.module_err_rx.recv() => {
+				if let Some(output) = output {
+					eprintln!("Module error: {}, restarting module", output.err);
+					self.uninitialized_modules.insert(output.module_id);
+				}
 			}
 		}
 	}

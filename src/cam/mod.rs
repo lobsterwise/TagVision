@@ -2,6 +2,7 @@ use std::sync::Arc;
 
 use fake::FakeCamera;
 use image::GrayImage;
+use tokio::sync::mpsc;
 
 use crate::config::{CameraBackendOption, CameraConfig, RuntimeConfig};
 
@@ -13,14 +14,11 @@ pub mod gstreamer;
 /// Native camera capture using nokhwa
 #[cfg(feature = "native")]
 pub mod native;
-/// Bare UVC camera capture
-#[cfg(feature = "uvc")]
-pub mod uvc;
 
 /// A camera that implements a backend
 pub struct Camera {
-	backend: Box<dyn CameraBackend>,
-	frame_buffer: Vec<Result<CameraFrame, CaptureError>>,
+	backend: Box<dyn CameraBackend + Send + Sync>,
+	frame_rx: mpsc::Receiver<FrameResult>,
 	/// Number of errors in consecutive frames since the last restart
 	frame_error_count: u32,
 	max_frame_errors: u32,
@@ -33,41 +31,38 @@ impl Camera {
 		runtime_config: &RuntimeConfig,
 		max_frame_errors: u32,
 	) -> Result<Self, CameraSetupError> {
+		let (tx, rx) = mpsc::channel(1);
+
 		Ok(Self {
-			backend: get_backend(&config, runtime_config)?,
-			frame_buffer: Vec::new(),
+			backend: get_backend(&config, runtime_config, tx)?,
+			frame_rx: rx,
 			frame_error_count: 0,
 			max_frame_errors,
 		})
 	}
 
-	/// Gets the next available frames from the camera
-	pub fn get_frames(&mut self) -> Result<&Vec<Result<CameraFrame, CaptureError>>, CaptureError> {
-		self.frame_buffer.clear();
-		self.backend.get_frames(&mut self.frame_buffer)?;
+	/// Gets the next available frame from the camera
+	pub async fn get_frame(&mut self) -> FrameResult {
+		match self.frame_rx.recv().await {
+			Some(result) => {
+				if result.is_err() {
+					self.frame_error_count += 1;
+				} else {
+					self.frame_error_count = 0;
+				}
 
-		for result in &self.frame_buffer {
-			if result.is_err() {
-				self.frame_error_count += 1;
-			} else {
-				self.frame_error_count = 0;
+				result
 			}
+			None => Err(CaptureError::PipelineError("Frame queue closed".into())),
 		}
-
-		Ok(&self.frame_buffer)
 	}
 
 	/// Checks this camera and returns whether it needs a restart
-	pub fn self_check(&mut self) -> bool {
+	pub fn self_check(&mut self) -> Option<CameraSetupError> {
 		if self.frame_error_count > self.max_frame_errors {
-			true
+			Some(CameraSetupError::TooManyFrameErrors)
 		} else {
-			if let Some(err) = self.backend.self_check() {
-				eprintln!("Camera error: {err}");
-				true
-			} else {
-				false
-			}
+			self.backend.self_check()
 		}
 	}
 }
@@ -78,15 +73,10 @@ pub trait CameraBackend {
 	fn init(
 		config: &CameraConfig,
 		runtime_config: &RuntimeConfig,
+		frame_tx: mpsc::Sender<FrameResult>,
 	) -> Result<Self, CameraSetupError>
 	where
 		Self: Sized;
-
-	/// Gets all new frames from the camera. The provided buffer will be empty.
-	fn get_frames(
-		&mut self,
-		buf: &mut Vec<Result<CameraFrame, CaptureError>>,
-	) -> Result<(), CaptureError>;
 
 	/// Checks for an extra setup error if available to automatically restart the camera
 	fn self_check(&mut self) -> Option<CameraSetupError> {
@@ -104,21 +94,17 @@ pub struct CameraFrame {
 fn get_backend(
 	config: &CameraConfig,
 	runtime_config: &RuntimeConfig,
-) -> Result<Box<dyn CameraBackend>, CameraSetupError> {
+	frame_tx: mpsc::Sender<FrameResult>,
+) -> Result<Box<dyn CameraBackend + Send + Sync>, CameraSetupError> {
 	match config.backend {
 		CameraBackendOption::Native => {
 			#[cfg(feature = "native")]
 			return Ok(Box::new(native::NativeCamera::init(
 				config,
 				runtime_config,
+				frame_tx,
 			)?));
 			#[cfg(not(feature = "native"))]
-			return Err(CameraSetupError::BackendMissing);
-		}
-		CameraBackendOption::UVC => {
-			#[cfg(feature = "uvc")]
-			return Ok(Box::new(uvc::UVCCamera::init(config, runtime_config)?));
-			#[cfg(not(feature = "uvc"))]
 			return Err(CameraSetupError::BackendMissing);
 		}
 		CameraBackendOption::GStreamer => {
@@ -126,20 +112,29 @@ fn get_backend(
 			return Ok(Box::new(gstreamer::GStreamerCamera::init(
 				config,
 				runtime_config,
+				frame_tx,
 			)?));
 			#[cfg(not(feature = "gstreamer"))]
 			return Err(CameraSetupError::BackendMissing);
 		}
 		CameraBackendOption::Fake => {
-			return Ok(Box::new(FakeCamera::init(config, runtime_config)?))
+			return Ok(Box::new(FakeCamera::init(
+				config,
+				runtime_config,
+				frame_tx,
+			)?))
 		}
 	}
 }
+
+/// A single result for a camera frame
+pub type FrameResult = Result<CameraFrame, CaptureError>;
 
 /// Different errors for camera creation
 #[derive(thiserror::Error, Debug)]
 pub enum CameraSetupError {
 	/// The given backend was not compiled in the binary
+	#[allow(dead_code)]
 	#[error("Backend was not compiled in binary")]
 	BackendMissing,
 	/// Error initializing the capture library
@@ -157,6 +152,9 @@ pub enum CameraSetupError {
 	/// Failed to start streaming data from the camera
 	#[error("Failed to start camera: {0}")]
 	StartError(String),
+	/// Too many errors from frames
+	#[error("Too many frame errors")]
+	TooManyFrameErrors,
 	/// General camera setup error
 	#[error("General setup error: {0}")]
 	GeneralError(String),
@@ -168,6 +166,9 @@ pub enum CaptureError {
 	/// The frame failed to decode to the proper format
 	#[error("Failed to decode frame: {0}")]
 	DecodeError(String),
+	/// Queue / pipeline error
+	#[error("Frame pipeline failed: {0}")]
+	PipelineError(String),
 	/// General capture error
 	#[error("General capture error: {0}")]
 	GeneralError(String),
