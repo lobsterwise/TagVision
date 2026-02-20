@@ -19,8 +19,6 @@ pub mod uvc;
 
 /// A camera that implements a backend
 pub struct Camera {
-	config: CameraConfig,
-	runtime_config: RuntimeConfig,
 	backend: Box<dyn CameraBackend>,
 	frame_buffer: Vec<Result<CameraFrame, CaptureError>>,
 	/// Number of errors in consecutive frames since the last restart
@@ -37,8 +35,6 @@ impl Camera {
 	) -> Result<Self, CameraSetupError> {
 		Ok(Self {
 			backend: get_backend(&config, runtime_config)?,
-			config,
-			runtime_config: runtime_config.clone(),
 			frame_buffer: Vec::new(),
 			frame_error_count: 0,
 			max_frame_errors,

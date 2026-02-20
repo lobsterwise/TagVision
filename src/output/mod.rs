@@ -71,17 +71,6 @@ impl Output {
 					let reconn_client = reconn_client.clone();
 					tokio::spawn(async move {
 						// I want to initialize all the topics asynchronously, but it creates data type mismatch errors, so we have to do it synchronously
-						if let Ok(pubsub) = reconn_client
-							.get_topic(
-								format!("{BASE_TABLE}/FPS"),
-								Duration::from_millis(10),
-								&client,
-							)
-							.await
-						{
-							*fps_pub.lock().await = Some(pubsub);
-						}
-
 						let mut output_modules2: HashMap<String, OutputModule> = HashMap::new();
 						for module_id in modules {
 							let module =
@@ -99,6 +88,17 @@ impl Output {
 						}
 						*output_modules.lock().await = output_modules2;
 
+						if let Ok(pubsub) = reconn_client
+							.get_topic(
+								format!("{BASE_TABLE}/FPS"),
+								Duration::from_millis(10),
+								&client,
+							)
+							.await
+						{
+							*fps_pub.lock().await = Some(pubsub);
+						}
+
 						println!("Output setup complete");
 					});
 				},
@@ -109,7 +109,8 @@ impl Output {
 			input,
 			runtime_config,
 			fps_timer: Timer::new(),
-			fps_event_count: 0,
+			event_count: 0,
+			detection_count: 0,
 			image_allocator: ImageAllocator::new(),
 			output_modules,
 			fps_pub,
@@ -123,13 +124,17 @@ impl Output {
 
 /// Data contained on the output task
 struct OutputThread {
-	input: Receiver<VisionOutput>,
 	runtime_config: RuntimeConfig,
-	fps_timer: Timer,
-	fps_event_count: u16,
 	image_allocator: ImageAllocator,
+	// Input
+	input: Receiver<VisionOutput>,
+	// Outputs
 	output_modules: Arc<Mutex<HashMap<String, OutputModule>>>,
 	fps_pub: Arc<Mutex<Option<PubSub<f64>>>>,
+	// Stats
+	fps_timer: Timer,
+	event_count: u16,
+	detection_count: u16,
 }
 
 impl OutputThread {
@@ -159,29 +164,38 @@ impl OutputThread {
 				}
 			}
 
-			{
+			if let Some(update) = output.update {
 				if let Ok(mut lock) = self.output_modules.try_lock() {
 					if let Some(module) = lock.get_mut(&output.module) {
-						let _ = module.output(output.update).await;
+						self.detection_count += 1;
+						let _ = module.output(update).await;
 					}
 				}
 			}
 
-			self.fps_event_count += 1;
+			self.event_count += 1;
 		}
 
-		// Calculate FPS
-		let fps_interval = 1.5;
+		// Calculate stats
+		let stats_interval = 1.5;
 		if self
 			.fps_timer
-			.interval(Duration::from_secs_f32(fps_interval))
+			.interval(Duration::from_secs_f32(stats_interval))
 		{
-			let fps = self.fps_event_count as f32 / fps_interval;
-			self.fps_event_count = 0;
+			let fps = self.event_count as f32 / stats_interval;
+			let detection_ratio = if self.event_count == 0 {
+				0.0
+			} else {
+				self.detection_count as f32 / self.event_count as f32
+			};
+
+			self.event_count = 0;
+			self.detection_count = 0;
+
 			if let Ok(Some(lock)) = self.fps_pub.try_lock().as_deref_mut() {
 				lock.publish(fps as f64).await;
 			}
-			println!("FPS: {fps:.3}");
+			println!("FPS: {fps:.3}; Detection %: {:.3}", detection_ratio * 100.0);
 		}
 	}
 }
@@ -189,7 +203,7 @@ impl OutputThread {
 /// Output from the vision thread and input to the output thread
 pub struct VisionOutput {
 	pub module: String,
-	pub update: PoseUpdate,
+	pub update: Option<PoseUpdate>,
 	pub frame: Option<Arc<GrayImage>>,
 	pub detections: Vec<AprilTagDetection>,
 }

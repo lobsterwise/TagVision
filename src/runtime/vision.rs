@@ -54,6 +54,7 @@ impl VisionRuntime {
 		(out, output_receiver)
 	}
 
+	/// Sends a frame to the vision threads
 	pub async fn send(
 		&mut self,
 		input: VisionThreadInput,
@@ -114,22 +115,20 @@ impl VisionThread {
 			let detections = detector.detect_markers(&input.frame.image);
 
 			let pose = solve_tags(&detections, &input.intrinsics, &self.layout, self.tag_size);
-			if let Some(pose) = pose {
-				let update = PoseUpdate {
-					pose,
-					timestamp: input.frame.timestamp,
-				};
+			let update = pose.map(|pose| PoseUpdate {
+				pose,
+				timestamp: input.frame.timestamp,
+			});
 
-				let output = VisionOutput {
-					module: input.module,
-					update,
-					frame: Some(input.frame.image),
-					detections: detections.to_vec(),
-				};
+			let output = VisionOutput {
+				module: input.module,
+				update,
+				frame: Some(input.frame.image),
+				detections: detections.to_vec(),
+			};
 
-				if let Err(e) = self.output.send(output).await {
-					eprintln!("Output thread not available: {e}");
-				}
+			if let Err(e) = self.output.send(output).await {
+				eprintln!("Output thread not available: {e}");
 			}
 		}
 	}

@@ -16,12 +16,50 @@
 		"main": {
 			"id": "main",
 			"camera": {
-				"device_id": "apriltags3.jpg",
+				"device_id": "apriltags2.jpg",
 				"backend": "fake",
+				"width": 718,
+				"height": 718,
+				"fps": 1000,
+				"is_monochrome": false,
+				"intrinsics": {
+					"camera_matrix": [
+						[
+							908.098384358348,
+							0.0,
+							815.5219613701814
+						],
+						[
+							0.0,
+							906.7681065090385,
+							675.4843979287789
+						],
+						[
+							0.0,
+							0.0,
+							1.0
+						]
+					],
+					"distortion": [
+						0.04572783027440048,
+						-0.07749345287804796,
+						0.000584608833635219,
+						-0.0001902073750203614,
+						0.018512713297153965
+					]
+				}
+			},
+			"max_errors": 5
+		},
+		"cam": {
+			"id": "cam",
+			"camera": {
+				"device_id": "0",
+				"backend": "native",
 				"width": 1600,
 				"height": 1200,
-				"fps": 500,
-				"is_monochrome": false,
+				"fps": 50,
+				"is_monochrome": true,
 				"intrinsics": {
 					"camera_matrix": [
 						[

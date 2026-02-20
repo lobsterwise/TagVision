@@ -121,8 +121,12 @@ impl AprilTagDetections {
 
 	/// Iterates over the detections
 	pub fn iter<'a>(&'a self) -> impl Iterator<Item = AprilTagDetection> + 'a {
-		let size = unsafe { (*self.detections).size } as usize;
-		(0..size).map(|x| unsafe { self.get_detection(x).unwrap_unchecked() })
+		(0..self.size()).map(|x| unsafe { self.get_detection(x).unwrap_unchecked() })
+	}
+
+	/// Gets the size of the detections
+	pub fn size(&self) -> usize {
+		unsafe { (*self.detections).size as usize }
 	}
 
 	/// Draws these detections on an image
