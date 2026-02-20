@@ -1,10 +1,10 @@
 use std::{sync::Arc, time::Duration};
 
 use nt_client::{
-	data::{r#type::NetworkTableData, Properties, SubscriptionOptions},
+	data::NetworkTableData,
 	publish::{NewPublisherError, Publisher},
-	subscribe::{ReceivedMessage, Subscriber},
-	topic::Topic,
+	subscribe::{ReceivedMessage, Subscriber, SubscriptionOptions},
+	topic::{Properties, Topic},
 	Client, ClientHandle, NewClientOptions,
 };
 use tokio::sync::{
@@ -150,7 +150,7 @@ impl<T: NetworkTableData> PubSub<T> {
 		match self.subscriber.recv().await {
 			Ok(message) => {
 				if let ReceivedMessage::Updated((_, value)) = message {
-					T::from_value(&value)
+					T::from_value(value)
 				} else {
 					None
 				}

@@ -15,7 +15,7 @@ imageproc = "0.25.0"
 libc = "0.2.171"
 nalgebra = "0.33.2"
 nokhwa = { version = "0.10.10", optional = true }
-nt_client = "0.4.0"
+nt_client = { version = "0.4.0", git = "https://github.com/lobsterwise/nt_client.git" }
 serde = { version = "1.0.219", features = ["derive"] }
 serde_json = "1.0.140"
 thiserror = "2.0.12"

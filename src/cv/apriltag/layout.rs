@@ -97,7 +97,7 @@ pub struct LayoutField {
 /// A single tag in the layout
 #[derive(Deserialize)]
 pub struct LayoutTag {
-	#[serde(rename = "ID")]
+	#[serde(alias = "ID")]
 	pub id: u8,
 	pub pose: LayoutPose,
 }

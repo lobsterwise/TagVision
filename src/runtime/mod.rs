@@ -24,7 +24,6 @@ pub struct Runtime {
 	/// Timer to periodically re-initialize dead modules
 	module_init_timer: Timer,
 	vision_runtime: VisionRuntime,
-	output: Output,
 }
 
 impl Runtime {
@@ -39,7 +38,7 @@ impl Runtime {
 		let (vision_runtime, output_receiver) =
 			VisionRuntime::new(&config.detector_params, &config.tags, &layout);
 
-		let output = Output::new(
+		Output::new(
 			output_receiver,
 			config.network.clone(),
 			config.runtime.clone(),
@@ -53,7 +52,6 @@ impl Runtime {
 			uninitialized_modules: modules,
 			vision_runtime,
 			module_init_timer: Timer::new(),
-			output,
 		}
 	}
 
