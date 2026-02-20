@@ -127,6 +127,9 @@ pub struct RuntimeConfig {
 	/// Specifies how many frames to keep in the camera frame queue before they start to be discarded
 	#[serde(default = "default_camera_queue_size")]
 	pub camera_queue_size: u8,
+	/// Number of threads to use for vision processing
+	#[serde(default = "default_vision_threads")]
+	pub vision_threads: u8,
 	/// How often to reconnect cameras that have come disconnected, in seconds
 	#[serde(default = "default_camera_reconnect_interval")]
 	pub camera_reconnect_interval: f32,
@@ -136,6 +139,7 @@ impl Default for RuntimeConfig {
 	fn default() -> Self {
 		Self {
 			camera_queue_size: default_camera_queue_size(),
+			vision_threads: default_vision_threads(),
 			camera_reconnect_interval: default_camera_reconnect_interval(),
 		}
 	}
@@ -143,6 +147,10 @@ impl Default for RuntimeConfig {
 
 fn default_camera_queue_size() -> u8 {
 	10
+}
+
+fn default_vision_threads() -> u8 {
+	4
 }
 
 fn default_camera_reconnect_interval() -> f32 {

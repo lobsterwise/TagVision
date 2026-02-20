@@ -16,6 +16,9 @@ mod module;
 mod output;
 /// Runtime for all of the modules, handling camera capture, processing, and output
 mod runtime;
+/// Overall system tests
+#[cfg(test)]
+mod test;
 /// General utilities
 mod util;
 

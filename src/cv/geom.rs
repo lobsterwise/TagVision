@@ -47,7 +47,6 @@ impl Pose3D {
 	}
 
 	pub fn get_rotation_matrix(&self) -> Matrix3<f64> {
-		// euler_to_rotation_matrix(self.rx, self.ry, self.rz)
 		nalgebra::Rotation3::from_euler_angles(self.rx, self.ry, self.rz).into()
 	}
 

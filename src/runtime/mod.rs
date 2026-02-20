@@ -43,8 +43,12 @@ impl Runtime {
 
 		// Set up all the channels
 
-		let (vision_runtime, output_receiver) =
-			VisionRuntime::new(&config.detector_params, &config.tags, &layout);
+		let (vision_runtime, output_receiver) = VisionRuntime::new(
+			&config.runtime,
+			&config.detector_params,
+			&config.tags,
+			&layout,
+		);
 
 		Output::new(output_receiver, config.network.clone(), &modules).await;
 
@@ -115,12 +119,17 @@ impl Runtime {
 
 	/// Run the runtime
 	pub async fn run(&mut self) {
-		// Attempt to start any modules that haven't yet
 		let reconnect_interval =
 			Duration::from_secs_f32(self.config.runtime.camera_reconnect_interval);
-		if self.module_init_timer.interval(reconnect_interval) {
-			self.initialize_modules().await;
-		}
+
+		let module_restart_wait_task = async {
+			loop {
+				if self.module_init_timer.has_elapsed(reconnect_interval) {
+					break;
+				}
+				tokio::time::sleep(Duration::from_secs_f32(0.25)).await;
+			}
+		};
 
 		// Get and send frames, selecting to ensure that we don't block on getting frames
 		// when the modules are all dead and we won't receive any
@@ -152,6 +161,10 @@ impl Runtime {
 					eprintln!("Module error: {}, restarting module", output.err);
 					self.uninitialized_modules.insert(output.module_id);
 				}
+			}
+			() = module_restart_wait_task => {
+				self.module_init_timer.restart();
+				self.initialize_modules().await;
 			}
 		}
 	}

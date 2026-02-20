@@ -155,9 +155,9 @@ impl OutputThread {
 			}
 
 			if let Some(update) = output.update {
+				self.detection_count += 1;
 				if let Ok(mut lock) = self.output_modules.try_lock() {
 					if let Some(module) = lock.get_mut(&output.module) {
-						self.detection_count += 1;
 						let _ = module.output(update).await;
 					}
 				}

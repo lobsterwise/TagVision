@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use nalgebra::{Matrix3x4, Vector3};
+use nalgebra::{Matrix3x4, Rotation3, Vector3};
 use serde::Deserialize;
 
 use crate::cv::geom::Pose3D;
@@ -19,6 +19,19 @@ pub enum AprilTagLayoutPreset {
 	Layout2025Welded,
 }
 
+impl AprilTagLayoutPreset {
+	fn get_layout(&self) -> &'static str {
+		match self {
+			Self::Layout2024 => include_str!("layouts/2024.json"),
+			Self::Layout2025Welded => include_str!("layouts/2025-welded.json"),
+		}
+	}
+
+	fn is_red_relative(&self) -> bool {
+		true
+	}
+}
+
 impl AprilTagLayout {
 	/// Loads the given WPILib AprilTag layout
 	pub fn load(layout: AprilTagLayoutDeser) -> Self {
@@ -35,12 +48,17 @@ impl AprilTagLayout {
 
 	/// Loads one of the preset AprilTag layouts
 	pub fn load_from_preset(layout: AprilTagLayoutPreset) -> Self {
-		let data = match layout {
-			AprilTagLayoutPreset::Layout2024 => include_str!("layouts/2024.json"),
-			AprilTagLayoutPreset::Layout2025Welded => include_str!("layouts/2025-welded.json"),
-		};
+		let data = layout.get_layout();
 
-		let deser = serde_json::from_str(data).expect("Preset layout is invalid");
+		let mut deser: AprilTagLayoutDeser =
+			serde_json::from_str(data).expect("Preset layout is invalid");
+
+		if layout.is_red_relative() {
+			for tag in &mut deser.tags {
+				tag.pose.translation.x = deser.field.length - tag.pose.translation.x;
+			}
+		}
+
 		Self::load(deser)
 	}
 
@@ -52,24 +70,18 @@ impl AprilTagLayout {
 	/// Gets the 3D corners of a tag
 	pub fn get_tag_corners(&self, tag: u8, tag_size: f64) -> Option<Matrix3x4<f64>> {
 		let center = self.get_tag_pose(tag)?;
-		
-		// We have to rotate by 90 degrees as the conventions of the layout is to have 0deg mean a sideways facing tag.
-		// We are trying to get the coordinate system of the tag's plane.
-		let mut modified_center = center.clone();
-		modified_center.ry += 90.0_f64.to_radians();
-		let tag_plane = modified_center.get_rotation_matrix();
-		
+
 		let half_tag_size = tag_size / 2.0;
 
 		// Corners in the tag's coordinate system, with the tag at the origin
-		let c1 = Vector3::new(half_tag_size, half_tag_size, 0.0);
-		let c2 = Vector3::new(-half_tag_size, half_tag_size, 0.0);
-		let c3 = Vector3::new(-half_tag_size, -half_tag_size, 0.0);
-		let c4 = Vector3::new(half_tag_size, -half_tag_size, 0.0);
+		let c1 = Vector3::new(0.0, half_tag_size, half_tag_size);
+		let c2 = Vector3::new(0.0, -half_tag_size, half_tag_size);
+		let c3 = Vector3::new(0.0, -half_tag_size, -half_tag_size);
+		let c4 = Vector3::new(0.0, half_tag_size, -half_tag_size);
 		let corners = Matrix3x4::from_columns(&[c1, c2, c3, c4]);
 
 		// Rotate to match the tag's plane
-		let mut corners = tag_plane * corners;
+		let mut corners = center.get_rotation_matrix() * corners;
 
 		// Translate to match the tag's position
 		let translation = Vector3::new(center.x, center.y, center.z);
@@ -127,4 +139,84 @@ pub struct LayoutQuaternion {
 	pub x: f64,
 	pub y: f64,
 	pub z: f64,
+}
+
+#[cfg(test)]
+mod tests {
+	use nalgebra::matrix;
+
+	use super::*;
+
+	#[test]
+	fn test_tag_corners_simple() {
+		let tag_pose = Pose3D {
+			x: 0.0,
+			y: 0.0,
+			z: 0.0,
+			rx: 0.0,
+			ry: 0.0,
+			rz: 0.0,
+		};
+		let expected = matrix![
+			0.0, 0.0, 0.0, 0.0;
+			1.0, -1.0, -1.0, 1.0;
+			1.0, 1.0, -1.0, -1.0;
+		];
+		test_tag_corners(tag_pose, expected);
+	}
+
+	#[test]
+	fn test_tag_corners_translation_only() {
+		let tag_pose = Pose3D {
+			x: 5.0,
+			y: 0.0,
+			z: 2.0,
+			rx: 0.0,
+			ry: 0.0,
+			rz: 0.0,
+		};
+		let expected = matrix![
+			5.0, 5.0, 5.0, 5.0;
+			1.0, -1.0, -1.0, 1.0;
+			3.0, 3.0, 1.0, 1.0;
+		];
+		test_tag_corners(tag_pose, expected);
+	}
+
+	#[test]
+	fn test_tag_corners_90deg_z() {
+		let tag_pose = Pose3D {
+			x: 0.0,
+			y: 0.0,
+			z: 0.0,
+			rx: 0.0,
+			ry: 0.0,
+			rz: 90.0_f64.to_radians(),
+		};
+		let expected = matrix![
+			-1.0, 1.0, 1.0, -1.0;
+			0.0, 0.0, 0.0, 0.0;
+			1.0, 1.0, -1.0, -1.0;
+		];
+		test_tag_corners(tag_pose, expected);
+	}
+
+	fn test_tag_corners(tag_pose: Pose3D, expected: Matrix3x4<f64>) {
+		let mut tags = HashMap::new();
+		tags.insert(0, tag_pose);
+
+		let layout = AprilTagLayout {
+			field: LayoutField {
+				length: 100.0,
+				width: 100.0,
+			},
+			tags,
+		};
+
+		let corners = layout.get_tag_corners(0, 2.0).unwrap();
+		if !corners.relative_eq(&expected, 0.01, 0.2) {
+			dbg!(corners, expected);
+			panic!("Did not match");
+		}
+	}
 }

@@ -7,7 +7,7 @@ use tokio::sync::{
 
 use crate::{
 	cam::CameraFrame,
-	config::TagConfig,
+	config::{RuntimeConfig, TagConfig},
 	cv::{
 		apriltag::{
 			layout::AprilTagLayout, params::AprilTagDetectorParams, AprilTagDetections,
@@ -31,6 +31,7 @@ pub struct VisionRuntime {
 impl VisionRuntime {
 	/// Creates a new VisionRuntime, also returning the receiver for vision outputs
 	pub fn new(
+		runtime_config: &RuntimeConfig,
 		params: &AprilTagDetectorParams,
 		tag_config: &TagConfig,
 		layout: &AprilTagLayout,
@@ -38,12 +39,11 @@ impl VisionRuntime {
 		// Create the output channel
 		let (output_sender, output_receiver) = mpsc::channel::<VisionOutput>(3);
 		// Create the channel inputs to the vision threads
-		let runtime_count = 4;
 		let (sender, receiver) = mpsc::channel::<VisionThreadInput>(QUEUE_SIZE);
 
 		let receiver = Arc::new(Mutex::new(receiver));
 
-		for _ in 0..runtime_count {
+		for _ in 0..runtime_config.vision_threads {
 			let vision_thread_data = VisionThread::new(
 				receiver.clone(),
 				output_sender.clone(),
