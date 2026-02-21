@@ -1,13 +1,12 @@
 use std::collections::HashMap;
 
-use nalgebra::{Matrix3x4, Rotation3, Vector3};
+use nalgebra::{Matrix3x4, Vector3};
 use serde::Deserialize;
 
 use crate::cv::geom::Pose3D;
 
 #[derive(Clone)]
 pub struct AprilTagLayout {
-	field: LayoutField,
 	tags: HashMap<u8, Pose3D>,
 }
 
@@ -46,10 +45,7 @@ impl AprilTagLayout {
 			tags.insert(tag.id, Pose3D::from_tag_pose(tag.pose));
 		}
 
-		Self {
-			field: layout.field,
-			tags,
-		}
+		Self { tags }
 	}
 
 	/// Loads one of the preset AprilTag layouts
@@ -211,13 +207,7 @@ mod tests {
 		let mut tags = HashMap::new();
 		tags.insert(0, tag_pose);
 
-		let layout = AprilTagLayout {
-			field: LayoutField {
-				length: 100.0,
-				width: 100.0,
-			},
-			tags,
-		};
+		let layout = AprilTagLayout { tags };
 
 		let corners = layout.get_tag_corners(0, 2.0).unwrap();
 		if !corners.relative_eq(&expected, 0.01, 0.2) {

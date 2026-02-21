@@ -4,22 +4,15 @@ use image::{GrayImage, RgbImage};
 
 /// Maintains reusable allocations for multiple image sizes
 pub struct ImageAllocator {
-	gray_images: HashMap<(u32, u32), GrayImage>,
 	rgb_images: HashMap<(u32, u32), RgbImage>,
 }
 
 impl ImageAllocator {
+	/// Creates a new image allocator
 	pub fn new() -> Self {
 		Self {
-			gray_images: HashMap::new(),
 			rgb_images: HashMap::new(),
 		}
-	}
-
-	pub fn get_gray_image(&mut self, width: u32, height: u32) -> &mut GrayImage {
-		self.gray_images
-			.entry((width, height))
-			.or_insert_with(|| GrayImage::new(width, height))
 	}
 
 	pub fn get_rgb_image(&mut self, width: u32, height: u32) -> &mut RgbImage {

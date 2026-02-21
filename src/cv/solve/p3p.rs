@@ -23,15 +23,6 @@ impl PnPSolver for P3P {
 		object_points: Matrix3x4<f64>,
 		rays: Matrix3x4<f64>,
 	) -> Option<PnPSolution> {
-		// let mu0 = image_points[(0, 0)];
-		// let mv0 = image_points[(1, 0)];
-		// let mu1 = image_points[(0, 1)];
-		// let mv1 = image_points[(1, 1)];
-		// let mu2 = image_points[(0, 2)];
-		// let mv2 = image_points[(1, 2)];
-		// let mu3 = image_points[(0, 3)];
-		// let mv3 = image_points[(1, 3)];
-
 		let rx0 = rays[(0, 0)];
 		let ry0 = rays[(1, 0)];
 		let rz0 = rays[(2, 0)];
@@ -105,32 +96,6 @@ impl P3P {
 		Y2: f64,
 		Z2: f64,
 	) -> Vec<(Matrix3<f64>, Matrix3x1<f64>)> {
-		// let mut mk0 = 0.0;
-		// let mut mk1 = 0.0;
-		// let mut mk2 = 0.0;
-		// let mut norm = 0.0;
-
-		// mu0 = self.inv_fx * mu0 - self.cx_fx;
-		// mv0 = self.inv_fy * mv0 - self.cy_fy;
-		// norm = (mu0 * mu0 + mv0 * mv0 + 1.0).sqrt();
-		// mk0 = 1.0 / norm;
-		// mu0 *= mk0;
-		// mv0 *= mk0;
-
-		// mu1 = self.inv_fx * mu1 - self.cx_fx;
-		// mv1 = self.inv_fy * mv1 - self.cy_fy;
-		// norm = (mu1 * mu1 + mv1 * mv1 + 1.0).sqrt();
-		// mk1 = 1.0 / norm;
-		// mu1 *= mk1;
-		// mv1 *= mk1;
-
-		// mu2 = self.inv_fx * mu2 - self.cx_fx;
-		// mv2 = self.inv_fy * mv2 - self.cy_fy;
-		// norm = (mu2 * mu2 + mv2 * mv2 + 1.0).sqrt();
-		// mk2 = 1.0 / norm;
-		// mu2 *= mk2;
-		// mv2 *= mk2;
-
 		let mu0 = rx0;
 		let mv0 = ry0;
 		let mk0 = rz0;

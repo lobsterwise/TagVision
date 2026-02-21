@@ -88,8 +88,6 @@ pub struct CameraConfig {
 	pub height: u16,
 	/// The desired frame rate of the camera in frames per second
 	pub fps: u16,
-	/// Whether or not this is a monochrome camera. If it is, we can skip the conversion to monochrome for the AprilTag detector
-	pub is_monochrome: bool,
 	/// The intrinsics of the camera
 	pub intrinsics: CameraCalibration,
 	/// The exposure of the camera in microseconds of exposure time
