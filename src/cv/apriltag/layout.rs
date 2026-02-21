@@ -17,6 +17,10 @@ pub enum AprilTagLayoutPreset {
 	Layout2024,
 	#[serde(rename = "2025_welded")]
 	Layout2025Welded,
+	#[serde(rename = "2026_andymark")]
+	Layout2026Andymark,
+	#[serde(rename = "2026_welded")]
+	Layout2026Welded,
 }
 
 impl AprilTagLayoutPreset {
@@ -24,6 +28,8 @@ impl AprilTagLayoutPreset {
 		match self {
 			Self::Layout2024 => include_str!("layouts/2024.json"),
 			Self::Layout2025Welded => include_str!("layouts/2025-welded.json"),
+			Self::Layout2026Andymark => include_str!("layouts/2026-andymark.json"),
+			Self::Layout2026Welded => include_str!("layouts/2026-welded.json"),
 		}
 	}
 
