@@ -33,11 +33,8 @@ impl CameraBackend for NativeCamera {
 		let _ = runtime_config;
 
 		// Camera setup
-		let index = if let Ok(index) = config.device_id.parse() {
-			CameraIndex::Index(index)
-		} else {
-			CameraIndex::String(config.device_id.clone())
-		};
+		let index = get_camera_index(config.device_id.clone())
+			.map_err(|e| CameraSetupError::CameraNotFound(e.to_string()))?;
 
 		let resolution = Resolution::new(config.width as u32, config.height as u32);
 
@@ -58,7 +55,7 @@ impl CameraBackend for NativeCamera {
 
 		{
 			let config = config.clone();
-			tokio::spawn(async move {
+			tokio::task::spawn_blocking(move || {
 				let camera = Camera::with_backend(index, format, backend);
 				let mut camera = match camera {
 					Ok(camera) => camera,
@@ -163,6 +160,18 @@ impl CameraBackend for NativeCamera {
 
 	fn self_check(&mut self) -> Option<CameraSetupError> {
 		self.capture_error.try_recv().ok()
+	}
+}
+
+/// Gets the final index of the camera from the given ID
+fn get_camera_index(camera_id: String) -> std::io::Result<CameraIndex> {
+	if let Ok(index) = camera_id.parse() {
+		Ok(CameraIndex::Index(index))
+	} else {
+		#[cfg(target_os = "linux")]
+		return super::lookup::lookup_camera_id_linux(&camera_id).map(CameraIndex::Index);
+		#[cfg(not(target_os = "linux"))]
+		return Ok(CameraIndex::String(camera_id.clone()));
 	}
 }
 

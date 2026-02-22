@@ -96,20 +96,6 @@ pub enum PnPSolution {
 /// A timestamped PnP solution
 #[derive(Clone, Debug)]
 pub struct PoseUpdate {
-	pub pose: Pose3D,
+	pub pose: Pose3DWithError,
 	pub timestamp: u128,
-}
-
-impl PoseUpdate {
-	pub fn as_array(&self) -> [f64; 7] {
-		[
-			self.pose.x,
-			self.pose.y,
-			self.pose.z,
-			self.pose.rx,
-			self.pose.ry,
-			self.pose.rz,
-			self.timestamp as f64,
-		]
-	}
 }

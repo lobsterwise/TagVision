@@ -54,20 +54,26 @@ impl PnPSolver for P3P {
 		);
 
 		// Map into poses with errors
-		let solutions = solutions.into_iter().map(|(R, t)| {
+		let solutions = solutions.into_iter().filter_map(|(R, t)| {
 			let X3p = R[(0, 0)] * X3 + R[(0, 1)] * Y3 + R[(0, 2)] * Z3 + t[0];
 			let Y3p = R[(1, 0)] * X3 + R[(1, 1)] * Y3 + R[(1, 2)] * Z3 + t[1];
 			let Z3p = R[(2, 0)] * X3 + R[(2, 1)] * Y3 + R[(2, 2)] * Z3 + t[2];
+
+			// Reject solutions behind the camera
+			if Z3p <= 0.0 {
+				return None;
+			}
+
 			let mu3p = self.cx + self.fx * X3p / Z3p;
 			let mv3p = self.cy + self.fy * Y3p / Z3p;
 
 			let reproj = (mu3p - (self.cx + self.fx * rx3 / rz3)).powi(2)
 				+ (mv3p - (self.cy + self.fy * ry3 / rz3)).powi(2);
 
-			Pose3DWithError {
+			Some(Pose3DWithError {
 				pose: Pose3D::from_matrices(t, R),
 				error: reproj,
-			}
+			})
 		});
 		Some(PnPSolution::Multi(solutions.collect()))
 	}
@@ -294,25 +300,42 @@ fn align(
 			- C_end[(i, 0)] * C_start[(2, 0)];
 	}
 
-	let mut Qs = Matrix4::zeros();
+	let mut Qs = Matrix4::<f64>::zeros();
 
-	Qs[(0, 0)] = s[(0, 0)] + s[(1, 1)] + s[(2, 2)];
-	Qs[(1, 1)] = s[(0, 0)] + s[(1, 1)] + s[(2, 2)];
-	Qs[(2, 2)] = s[(1, 1)] + s[(2, 2)] + s[(0, 0)];
-	Qs[(3, 3)] = s[(2, 2)] + s[(0, 0)] + s[(1, 1)];
+	let Sxx = s[(0, 0)];
+	let Sxy = s[(0, 1)];
+	let Sxz = s[(0, 2)];
+	let Syx = s[(1, 0)];
+	let Syy = s[(1, 1)];
+	let Syz = s[(1, 2)];
+	let Szx = s[(2, 0)];
+	let Szy = s[(2, 1)];
+	let Szz = s[(2, 2)];
 
-	Qs[(1, 0)] = s[(1, 2)] - s[(2, 1)];
-	Qs[(0, 1)] = s[(1, 2)] - s[(2, 1)];
-	Qs[(2, 0)] = s[(2, 0)] - s[(0, 2)];
-	Qs[(0, 2)] = s[(2, 0)] - s[(0, 2)];
-	Qs[(3, 0)] = s[(0, 1)] - s[(1, 0)];
-	Qs[(0, 3)] = s[(0, 1)] - s[(1, 0)];
-	Qs[(2, 1)] = s[(1, 0)] - s[(0, 1)];
-	Qs[(1, 2)] = s[(1, 0)] - s[(0, 1)];
-	Qs[(3, 1)] = s[(2, 0)] - s[(0, 2)];
-	Qs[(1, 3)] = s[(2, 0)] - s[(0, 2)];
-	Qs[(3, 2)] = s[(2, 1)] - s[(1, 2)];
-	Qs[(2, 3)] = s[(2, 1)] - s[(1, 2)];
+	let trace = Sxx + Syy + Szz;
+
+	// Diagonal
+	Qs[(0, 0)] = trace;
+	Qs[(1, 1)] = Sxx - Syy - Szz;
+	Qs[(2, 2)] = -Sxx + Syy - Szz;
+	Qs[(3, 3)] = -Sxx - Syy + Szz;
+
+	// Upper triangle
+	Qs[(0, 1)] = Syz - Szy;
+	Qs[(0, 2)] = Szx - Sxz;
+	Qs[(0, 3)] = Sxy - Syx;
+
+	Qs[(1, 2)] = Sxy + Syx;
+	Qs[(1, 3)] = Szx + Sxz;
+	Qs[(2, 3)] = Syz + Szy;
+
+	// Symmetric lower triangle
+	Qs[(1, 0)] = Qs[(0, 1)];
+	Qs[(2, 0)] = Qs[(0, 2)];
+	Qs[(3, 0)] = Qs[(0, 3)];
+	Qs[(2, 1)] = Qs[(1, 2)];
+	Qs[(3, 1)] = Qs[(1, 3)];
+	Qs[(3, 2)] = Qs[(2, 3)];
 
 	let (evs, U) = jacobi_4x4(&mut Qs);
 

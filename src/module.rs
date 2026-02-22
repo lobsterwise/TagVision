@@ -1,4 +1,5 @@
 use tokio::sync::mpsc;
+use tracing::info;
 
 use crate::{
 	cam::{Camera, CameraSetupError, FrameResult},
@@ -25,39 +26,43 @@ impl Module {
 			let intrinsics = intrinsics.clone();
 
 			tokio::spawn(async move {
-				let mut camera = match Camera::from_config(
-					config.camera.clone(),
-					&runtime_config,
-					config.max_errors,
-				) {
-					Ok(camera) => camera,
-					Err(e) => {
-						let _ = error_tx
-							.send(ModuleErrorOutput {
-								module_id: id.clone(),
-								err: e,
-							})
-							.await;
+				let mut camera =
+					Camera::from_config(config.camera.clone(), &runtime_config, config.max_errors);
 
-						return;
-					}
-				};
+				if camera.is_ok() {
+					info!("Successfully initialized module {id}");
+				}
 
 				loop {
-					let frame = camera.get_frame().await;
+					match &mut camera {
+						Ok(camera) => {
+							let frame = camera.get_frame().await;
 
-					let _ = output_tx.try_send(ModuleOutput {
-						module_id: id.clone(),
-						frame,
-						intrinsics: intrinsics.clone(),
-					});
+							let _ = output_tx.try_send(ModuleOutput {
+								module_id: id.clone(),
+								frame,
+								intrinsics: intrinsics.clone(),
+							});
 
-					if let Some(err) = camera.self_check() {
-						let _ = error_tx.send(ModuleErrorOutput {
-							module_id: id.clone(),
-							err,
-						});
-						return;
+							if let Some(err) = camera.self_check() {
+								let _ = error_tx
+									.send(ModuleErrorOutput {
+										module_id: id.clone(),
+										err,
+									})
+									.await;
+								break;
+							}
+						}
+						Err(err) => {
+							let _ = error_tx
+								.send(ModuleErrorOutput {
+									module_id: id.clone(),
+									err: err.clone(),
+								})
+								.await;
+							break;
+						}
 					}
 				}
 			});

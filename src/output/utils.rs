@@ -12,6 +12,7 @@ use tokio::sync::{
 	mpsc::{Receiver, Sender},
 	RwLock,
 };
+use tracing::{error, info};
 
 /// A client that can restart itself and recreate all of it's topics and pubsubs if it disconnects
 pub struct ReconnectableClient {
@@ -32,7 +33,7 @@ impl ReconnectableClient {
 			});
 			let mut connect_result = client
 				.connect_setup(|client| {
-					println!("Client connected, setting up output");
+					info!("NetworkTables connected, setting up output");
 					setup_fn(client, &reconn_client);
 				})
 				.await;
@@ -40,7 +41,7 @@ impl ReconnectableClient {
 			// Reconnect logic
 			loop {
 				if let Err(e) = connect_result {
-					eprintln!("Connection error: {e}. Reconnecting in {reconnect_interval:?}...");
+					error!("NetworkTables Connection error: {e}. Reconnecting in {reconnect_interval:?}...");
 					tokio::time::sleep(reconnect_interval).await;
 
 					client = Client::new(options.clone());
@@ -177,7 +178,7 @@ impl<T: NetworkTableData> PubSub<T> {
 	/// Disconnects the pubsub and attempts to reconnect it. It may not succeed.
 	pub async fn reconnect(&mut self) {
 		if self.connected {
-			eprintln!("Topic {} reconnecting...", self.topic.name());
+			error!("Topic {} reconnecting...", self.topic.name());
 		}
 
 		self.connected = false;

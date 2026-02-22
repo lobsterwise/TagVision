@@ -1,5 +1,6 @@
-use std::sync::Arc;
+use std::{ops::Sub, sync::Arc};
 
+use nalgebra::Vector3;
 use tokio::sync::{
 	mpsc::{self, error::TrySendError},
 	Mutex,
@@ -14,7 +15,7 @@ use crate::{
 			AprilTagDetector,
 		},
 		distort::OpenCVCameraIntrinsics,
-		geom::{PnPSolution, Pose3D, PoseUpdate},
+		geom::{PnPSolution, Pose3DWithError, PoseUpdate},
 		solve::{p3p::P3P, PnPSolver},
 	},
 	output::VisionOutput,
@@ -42,11 +43,13 @@ impl VisionRuntime {
 		let (sender, receiver) = mpsc::channel::<VisionThreadInput>(QUEUE_SIZE);
 
 		let receiver = Arc::new(Mutex::new(receiver));
+		let last_pose = Arc::new(Mutex::new(None));
 
 		for _ in 0..runtime_config.vision_threads {
 			let vision_thread_data = VisionThread::new(
 				receiver.clone(),
 				output_sender.clone(),
+				last_pose.clone(),
 				params.clone(),
 				layout.clone(),
 				tag_config.tag_size,
@@ -85,6 +88,7 @@ pub struct VisionThreadInput {
 pub struct VisionThread {
 	input: Arc<Mutex<mpsc::Receiver<VisionThreadInput>>>,
 	output: mpsc::Sender<VisionOutput>,
+	last_pose: Arc<Mutex<Option<Pose3DWithError>>>,
 	params: AprilTagDetectorParams,
 	layout: AprilTagLayout,
 	tag_size: f64,
@@ -94,6 +98,7 @@ impl VisionThread {
 	fn new(
 		input_channel: Arc<Mutex<mpsc::Receiver<VisionThreadInput>>>,
 		output_channel: mpsc::Sender<VisionOutput>,
+		last_pose: Arc<Mutex<Option<Pose3DWithError>>>,
 		params: AprilTagDetectorParams,
 		layout: AprilTagLayout,
 		tag_size: f64,
@@ -101,6 +106,7 @@ impl VisionThread {
 		Self {
 			input: input_channel,
 			output: output_channel,
+			last_pose,
 			params,
 			layout,
 			tag_size,
@@ -129,8 +135,19 @@ impl VisionThread {
 			let detection_time = timer.get_elapsed();
 
 			timer.restart();
-			let pose = solve_tags(&detections, &input.intrinsics, &self.layout, self.tag_size);
+			let last_pose = self.last_pose.lock().await.clone();
+			let pose = solve_tags(
+				&detections,
+				&input.intrinsics,
+				&self.layout,
+				self.tag_size,
+				last_pose,
+			);
 			let estimation_time = timer.get_elapsed();
+
+			if let Some(pose) = &pose {
+				*self.last_pose.lock().await = Some(pose.clone());
+			}
 
 			let update = pose.map(|pose| PoseUpdate {
 				pose,
@@ -153,12 +170,14 @@ impl VisionThread {
 	}
 }
 
+/// Solve tags, returning the pose and average ambiguity
 fn solve_tags(
 	detections: &AprilTagDetections,
 	intrinsics: &OpenCVCameraIntrinsics,
 	layout: &AprilTagLayout,
 	tag_size: f64,
-) -> Option<Pose3D> {
+	last_pose: Option<Pose3DWithError>,
+) -> Option<Pose3DWithError> {
 	if detections.size() == 0 {
 		return None;
 	}
@@ -179,13 +198,13 @@ fn solve_tags(
 
 		match solution {
 			PnPSolution::Multi(poses) => {
-				let pose_with_min_err = poses.into_iter().min_by(|x, y| {
-					x.error
-						.partial_cmp(&y.error)
+				let best_pose = poses.into_iter().min_by(|x, y| {
+					score_pose(x, last_pose.as_ref())
+						.partial_cmp(&score_pose(y, last_pose.as_ref()))
 						.unwrap_or(std::cmp::Ordering::Equal)
 				});
-				if let Some(pose) = pose_with_min_err {
-					solved_poses.push(pose.pose);
+				if let Some(pose) = best_pose {
+					solved_poses.push(pose);
 				}
 			}
 		}
@@ -199,14 +218,38 @@ fn solve_tags(
 
 	let mut pose_sum = solved_poses
 		.iter()
-		.fold(Pose3D::default(), |acc, pose| acc.add(pose));
+		.fold(Pose3DWithError::default(), |acc, pose| Pose3DWithError {
+			error: acc.error + pose.error,
+			pose: acc.pose.add(&pose.pose),
+		});
 	let n = solved_poses.len() as f64;
-	pose_sum.x /= n;
-	pose_sum.y /= n;
-	pose_sum.z /= n;
-	pose_sum.rx /= n;
-	pose_sum.ry /= n;
-	pose_sum.rz /= n;
+	pose_sum.pose.x /= n;
+	pose_sum.pose.y /= n;
+	pose_sum.pose.z /= n;
+	pose_sum.pose.rx /= n;
+	pose_sum.pose.ry /= n;
+	pose_sum.pose.rz /= n;
+	pose_sum.error /= n;
 
 	Some(pose_sum)
+}
+
+/// Scores a given ambiguous pose option, with lower being better
+fn score_pose(pose: &Pose3DWithError, last_pose: Option<&Pose3DWithError>) -> f64 {
+	let dist_score = if let Some(last_pose) = last_pose {
+		Vector3::new(pose.pose.x, pose.pose.y, pose.pose.z)
+			.sub(Vector3::new(
+				last_pose.pose.x,
+				last_pose.pose.y,
+				last_pose.pose.z,
+			))
+			.norm()
+	} else {
+		0.0
+	};
+
+	// let err_score = pose.error;
+	let err_score = 0.0;
+
+	dist_score + err_score
 }

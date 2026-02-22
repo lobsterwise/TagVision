@@ -11,6 +11,9 @@ pub mod fake;
 /// GStreamer camera capture
 #[cfg(feature = "gstreamer")]
 pub mod gstreamer;
+/// Camera lookup
+#[cfg(target_os = "linux")]
+mod lookup;
 /// Native camera capture using nokhwa
 #[cfg(feature = "native")]
 pub mod native;
@@ -53,7 +56,10 @@ impl Camera {
 
 				result
 			}
-			None => Err(CaptureError::PipelineError("Frame queue closed".into())),
+			None => {
+				self.frame_error_count += 1;
+				Err(CaptureError::PipelineError("Frame queue closed".into()))
+			}
 		}
 	}
 
@@ -131,7 +137,7 @@ fn get_backend(
 pub type FrameResult = Result<CameraFrame, CaptureError>;
 
 /// Different errors for camera creation
-#[derive(thiserror::Error, Debug)]
+#[derive(thiserror::Error, Debug, Clone)]
 pub enum CameraSetupError {
 	/// The given backend was not compiled in the binary
 	#[allow(dead_code)]

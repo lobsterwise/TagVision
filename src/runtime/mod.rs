@@ -4,6 +4,7 @@ use std::{
 };
 
 use tokio::sync::mpsc;
+use tracing::{error, info};
 use vision::{VisionRuntime, VisionThreadInput};
 
 use crate::{
@@ -80,7 +81,7 @@ impl Runtime {
 
 		for module_id in &self.uninitialized_modules {
 			let Some(config) = self.config.modules.get(module_id) else {
-				eprintln!("Uninitialized module '{module_id}' does not exist");
+				error!("Uninitialized module '{module_id}' does not exist");
 				continue;
 			};
 
@@ -100,7 +101,7 @@ impl Runtime {
 			let module = match result {
 				Ok(module) => module,
 				Err(e) => {
-					eprintln!("Failed to start module '{module_id}': {e}");
+					error!("Failed to start module '{module_id}': {e}");
 					continue;
 				}
 			};
@@ -108,7 +109,6 @@ impl Runtime {
 			self.modules.insert(module_id.clone(), module);
 
 			to_remove.insert(module_id.clone());
-			println!("Successfully initialized module '{module_id}'");
 		}
 
 		// Remove the initialized modules from the uninitialized list
@@ -147,18 +147,19 @@ impl Runtime {
 								})
 								.await
 							{
-								eprintln!("Vision thread not available: {e}");
+								error!("Vision thread not available: {e}");
 							}
 						}
 						Err(e) => {
-							eprintln!("Frame error for module '{}': {e}", output.module_id);
+							error!("Frame error for module '{}': {e}", output.module_id);
 						}
 					};
 				}
 			}
 			output = self.module_err_rx.recv() => {
 				if let Some(output) = output {
-					eprintln!("Module error: {}, restarting module", output.err);
+					error!("Module error: {}", output.err);
+					info!("Restarting module {}", output.module_id);
 					self.uninitialized_modules.insert(output.module_id);
 				}
 			}

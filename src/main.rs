@@ -3,6 +3,7 @@ use std::fs::File;
 use clap::Parser;
 use config::Config;
 use runtime::Runtime;
+use tracing::{error, info};
 
 /// Camera hardware interfaces
 mod cam;
@@ -24,6 +25,8 @@ mod util;
 
 #[tokio::main(flavor = "multi_thread")]
 async fn main() {
+	tracing_subscriber::fmt::init();
+
 	let config_file = File::open("config.json").expect("Failed to open config file");
 	let mut config: Config =
 		serde_json::from_reader(config_file).expect("Failed to parse config file");
@@ -42,12 +45,12 @@ async fn main() {
 			}
 		}
 		Err(e) => {
-			eprintln!("CLI parse error: {e}");
+			error!("CLI parse error: {e}");
 		}
 	}
 
 	let runtime = Runtime::new(config).await;
-	println!("Runtime initialized");
+	info!("Runtime initialized");
 
 	runtime.run_forever().await;
 }
