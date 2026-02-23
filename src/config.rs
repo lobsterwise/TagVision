@@ -20,6 +20,9 @@ pub struct Config {
 	pub detector_params: AprilTagDetectorParams,
 	/// Configuration for the AprilTags
 	pub tags: TagConfig,
+	/// Tag filters
+	#[serde(default)]
+	pub filters: TagFilters,
 	/// Configuration for the runtime
 	#[serde(default)]
 	pub runtime: RuntimeConfig,
@@ -55,6 +58,19 @@ pub struct TagConfig {
 	pub tag_size: f64,
 	/// The name of the tag layout to use
 	pub layout: AprilTagLayoutPreset,
+}
+
+/// Filters for tag detections
+#[derive(Deserialize, Clone, Default)]
+pub struct TagFilters {
+	/// Minimum area for detections
+	pub min_area: Option<f64>,
+	/// Maximum area for detections
+	pub max_area: Option<f64>,
+	/// Minimum perimeter for detections
+	pub min_perimeter: Option<f64>,
+	/// Maximum perimeter for detections
+	pub max_perimeter: Option<f64>,
 }
 
 /// Configuration for a single camera module

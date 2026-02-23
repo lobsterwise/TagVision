@@ -8,7 +8,7 @@ use tokio::sync::{
 
 use crate::{
 	cam::CameraFrame,
-	config::{RuntimeConfig, TagConfig},
+	config::{RuntimeConfig, TagConfig, TagFilters},
 	cv::{
 		apriltag::{
 			layout::AprilTagLayout, params::AprilTagDetectorParams, AprilTagDetections,
@@ -36,6 +36,7 @@ impl VisionRuntime {
 		params: &AprilTagDetectorParams,
 		tag_config: &TagConfig,
 		layout: &AprilTagLayout,
+		filters: &TagFilters,
 	) -> (Self, mpsc::Receiver<VisionOutput>) {
 		// Create the output channel
 		let (output_sender, output_receiver) = mpsc::channel::<VisionOutput>(3);
@@ -53,6 +54,7 @@ impl VisionRuntime {
 				params.clone(),
 				layout.clone(),
 				tag_config.tag_size,
+				filters.clone(),
 			);
 
 			tokio::spawn(vision_thread_data.run_forever());
@@ -92,6 +94,7 @@ pub struct VisionThread {
 	params: AprilTagDetectorParams,
 	layout: AprilTagLayout,
 	tag_size: f64,
+	filters: TagFilters,
 }
 
 impl VisionThread {
@@ -102,6 +105,7 @@ impl VisionThread {
 		params: AprilTagDetectorParams,
 		layout: AprilTagLayout,
 		tag_size: f64,
+		filters: TagFilters,
 	) -> Self {
 		Self {
 			input: input_channel,
@@ -110,6 +114,7 @@ impl VisionThread {
 			params,
 			layout,
 			tag_size,
+			filters,
 		}
 	}
 
@@ -141,6 +146,7 @@ impl VisionThread {
 				&input.intrinsics,
 				&self.layout,
 				self.tag_size,
+				&self.filters,
 				last_pose,
 			);
 			let estimation_time = timer.get_elapsed();
@@ -176,6 +182,7 @@ fn solve_tags(
 	intrinsics: &OpenCVCameraIntrinsics,
 	layout: &AprilTagLayout,
 	tag_size: f64,
+	filters: &TagFilters,
 	last_pose: Option<Pose3DWithError>,
 ) -> Option<Pose3DWithError> {
 	if detections.size() == 0 {
@@ -185,6 +192,10 @@ fn solve_tags(
 	let mut solver = P3P::new(intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy);
 	let mut solved_poses = Vec::new();
 	for detection in detections.iter() {
+		if detection.is_filtered(filters) {
+			continue;
+		}
+
 		let tag_corners_3d = layout.get_tag_corners(detection.id, tag_size);
 		let Some(tag_corners_3d) = tag_corners_3d else {
 			continue;

@@ -49,6 +49,7 @@ impl Runtime {
 			&config.detector_params,
 			&config.tags,
 			&layout,
+			&config.filters,
 		);
 
 		Output::new(output_receiver, config.network.clone(), &modules).await;

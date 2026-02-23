@@ -7,8 +7,10 @@ use imageproc::pixelops::interpolate;
 use std::{fmt::Debug, sync::Arc};
 
 use image::{GrayImage, Rgb, RgbImage};
-use nalgebra::{Matrix2x4, Matrix3x4, Matrix4x2, Vector2};
+use nalgebra::{matrix, Matrix2x4, Matrix3x4, Matrix4x2, Vector2};
 use params::AprilTagDetectorParams;
+
+use crate::config::TagFilters;
 
 use super::distort::OpenCVCameraIntrinsics;
 
@@ -119,7 +121,7 @@ impl AprilTagDetections {
 			hamming: raw_detection.hamming as u8,
 			decision_margin: raw_detection.decision_margin,
 			center: Vector2::from_row_slice(&raw_detection.c),
-			corners: Matrix2x4::from_row_slice(raw_detection.p.as_flattened()).transpose(),
+			corners: Matrix4x2::from_row_slice(raw_detection.p.as_flattened()).transpose(),
 		})
 	}
 
@@ -169,51 +171,111 @@ pub struct AprilTagDetection {
 	pub hamming: u8,
 	pub decision_margin: f32,
 	pub center: Vector2<f64>,
-	pub corners: Matrix4x2<f64>,
+	// Apriltag corners, with the bottom left being corner 0 and going counterclockwise from there
+	pub corners: Matrix2x4<f64>,
 }
 
 impl AprilTagDetection {
+	/// Gets the perimeter of this tag in pixels
+	pub fn perimeter(&self) -> f64 {
+		let side0 = (self.corners.column(1) - self.corners.column(0)).norm();
+		let side1 = (self.corners.column(2) - self.corners.column(1)).norm();
+		let side2 = (self.corners.column(3) - self.corners.column(2)).norm();
+		let side3 = (self.corners.column(0) - self.corners.column(3)).norm();
+
+		side0 + side1 + side2 + side3
+	}
+
+	/// Gets the area of this tag in pixels
+	pub fn area(&self) -> f64 {
+		// Get the determinant of the matrix of the vectors from the bottom left corner
+		let bottom_left = self.corners.column(0);
+		let bottom_right = self.corners.column(1);
+		let top_left = self.corners.column(3);
+
+		let matrix = matrix![
+			top_left.x - bottom_left.x, bottom_right.x - bottom_left.x;
+			top_left.y - bottom_left.y, bottom_right.y - bottom_left.y;
+		];
+
+		matrix.determinant().abs()
+	}
+
+	/// Gets whether this tag is filtered out
+	pub fn is_filtered(&self, filters: &TagFilters) -> bool {
+		let area = self.area();
+		if let Some(min_area) = filters.min_area {
+			if area < min_area {
+				return false;
+			}
+		}
+		if let Some(max_area) = filters.max_area {
+			if area > max_area {
+				return false;
+			}
+		}
+
+		let perimeter = self.perimeter();
+		if let Some(min_perimeter) = filters.min_perimeter {
+			if perimeter < min_perimeter {
+				return false;
+			}
+		}
+		if let Some(max_perimeter) = filters.max_perimeter {
+			if perimeter > max_perimeter {
+				return false;
+			}
+		}
+
+		false
+	}
+
 	/// Draws this tag detection on an image
 	pub fn draw(&self, image: &mut RgbImage) {
 		imageproc::drawing::draw_antialiased_line_segment_mut(
 			image,
-			(self.corners[(0, 0)] as i32, self.corners[(0, 1)] as i32),
-			(self.corners[(1, 0)] as i32, self.corners[(1, 1)] as i32),
+			(self.corners[(0, 0)] as i32, self.corners[(1, 0)] as i32),
+			(self.corners[(0, 1)] as i32, self.corners[(1, 1)] as i32),
 			Rgb([255, 0, 0]),
 			interpolate,
 		);
 		imageproc::drawing::draw_antialiased_line_segment_mut(
 			image,
-			(self.corners[(1, 0)] as i32, self.corners[(1, 1)] as i32),
-			(self.corners[(2, 0)] as i32, self.corners[(2, 1)] as i32),
+			(self.corners[(0, 1)] as i32, self.corners[(1, 1)] as i32),
+			(self.corners[(0, 2)] as i32, self.corners[(1, 2)] as i32),
 			Rgb([255, 0, 0]),
 			interpolate,
 		);
 		imageproc::drawing::draw_antialiased_line_segment_mut(
 			image,
-			(self.corners[(2, 0)] as i32, self.corners[(2, 1)] as i32),
-			(self.corners[(3, 0)] as i32, self.corners[(3, 1)] as i32),
+			(self.corners[(0, 2)] as i32, self.corners[(1, 2)] as i32),
+			(self.corners[(0, 3)] as i32, self.corners[(1, 3)] as i32),
 			Rgb([255, 0, 0]),
 			interpolate,
 		);
 		imageproc::drawing::draw_antialiased_line_segment_mut(
 			image,
-			(self.corners[(3, 0)] as i32, self.corners[(3, 1)] as i32),
-			(self.corners[(0, 0)] as i32, self.corners[(0, 1)] as i32),
+			(self.corners[(0, 3)] as i32, self.corners[(1, 3)] as i32),
+			(self.corners[(0, 0)] as i32, self.corners[(1, 0)] as i32),
 			Rgb([255, 0, 0]),
 			interpolate,
+		);
+
+		// First corner dot
+		imageproc::drawing::draw_filled_circle_mut(
+			image,
+			(self.corners[(0, 0)] as i32, self.corners[(1, 0)] as i32),
+			2,
+			Rgb([0, 255, 0]),
 		);
 	}
 
 	/// Undistorts this detection's corners using the given camera intrinsics
 	pub fn get_undistorted_corners(&self, intrinsics: &OpenCVCameraIntrinsics) -> Matrix3x4<f64> {
-		let corners = self.corners.transpose();
-
-		// Undistort each corner
-		let v1 = intrinsics.unproject_one(&corners.column(0).clone_owned());
-		let v2 = intrinsics.unproject_one(&corners.column(1).clone_owned());
-		let v3 = intrinsics.unproject_one(&corners.column(2).clone_owned());
-		let v4 = intrinsics.unproject_one(&corners.column(3).clone_owned());
+		let v1 = intrinsics.unproject_one(&self.corners.column(0).clone_owned());
+		let v2 = intrinsics.unproject_one(&self.corners.column(1).clone_owned());
+		let v3 = intrinsics.unproject_one(&self.corners.column(2).clone_owned());
+		let v4 = intrinsics.unproject_one(&self.corners.column(3).clone_owned());
 
 		Matrix3x4::from_columns(&[v1, v2, v3, v4])
 	}

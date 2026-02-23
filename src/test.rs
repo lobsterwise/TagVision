@@ -13,6 +13,7 @@ async fn test_3_apriltags() {
 #[tokio::test]
 async fn test_5_apriltags() {
 	let detections = get_image_detections(include_bytes!("../test_images/5.jpg")).await;
+	println!("{}", detections.get_detection(0).unwrap().area());
 	assert_eq!(detections.size(), 5);
 }
 
