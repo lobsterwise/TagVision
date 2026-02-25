@@ -50,8 +50,6 @@ impl Camera {
 			Some(result) => {
 				if result.is_err() {
 					self.frame_error_count += 1;
-				} else {
-					self.frame_error_count = 0;
 				}
 
 				result
@@ -66,6 +64,7 @@ impl Camera {
 	/// Checks this camera and returns whether it needs a restart
 	pub fn self_check(&mut self) -> Option<CameraSetupError> {
 		if self.frame_error_count > self.max_frame_errors {
+			self.frame_error_count = 0;
 			Some(CameraSetupError::TooManyFrameErrors)
 		} else {
 			self.backend.self_check()

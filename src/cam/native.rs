@@ -1,4 +1,5 @@
 use std::{
+	panic::catch_unwind,
 	sync::Arc,
 	time::{SystemTime, UNIX_EPOCH},
 };
@@ -12,6 +13,7 @@ use nokhwa::{
 	Camera, NokhwaError,
 };
 use tokio::sync::{mpsc, oneshot};
+use tracing::{error, info};
 
 use crate::{
 	cam::FrameResult,
@@ -55,8 +57,8 @@ impl CameraBackend for NativeCamera {
 
 		{
 			let config = config.clone();
-			tokio::task::spawn_blocking(move || {
-				let camera = Camera::with_backend(index, format, backend);
+			std::thread::spawn(move || {
+				let camera = Camera::with_backend(index.clone(), format, backend);
 				let mut camera = match camera {
 					Ok(camera) => camera,
 					Err(e) => {
@@ -81,8 +83,7 @@ impl CameraBackend for NativeCamera {
 						KnownCameraControl::Exposure,
 						ControlValueSetter::Integer(exposure as i64),
 					) {
-						let _ = error_tx.send(e);
-						return;
+						error!("Failed to configure camera exposure: {e}");
 					}
 				}
 
@@ -93,8 +94,7 @@ impl CameraBackend for NativeCamera {
 							KnownCameraControl::Brightness,
 							ControlValueSetter::Float(brightness as f64),
 						) {
-							let _ = error_tx.send(e);
-							return;
+							error!("Failed to configure camera brightness: {e}");
 						}
 					}
 				}
@@ -106,16 +106,16 @@ impl CameraBackend for NativeCamera {
 							KnownCameraControl::Brightness,
 							ControlValueSetter::Float(contrast as f64),
 						) {
-							let _ = error_tx.send(e);
-							return;
+							error!("Failed to configure camera contrast: {e}");
 						}
 					}
 				}
 
 				if let Err(e) = camera.open_stream() {
 					let _ = error_tx.send(CameraSetupError::GeneralError(e.to_string()));
-					return;
 				}
+
+				info!("Initialized native camera {index}");
 
 				loop {
 					let frame = match camera.frame() {
@@ -137,9 +137,21 @@ impl CameraBackend for NativeCamera {
 							.unwrap_or_default()
 							.as_millis();
 
-						let frame = match frame.decode_image::<LumaFormat>() {
+						let frame = catch_unwind(|| frame.decode_image::<LumaFormat>());
+						let frame = match frame {
 							Ok(frame) => frame,
-							Err(e) => return Err(CaptureError::DecodeError(e.to_string())),
+							Err(e) => {
+								return Err(CaptureError::GeneralError(format!(
+									"Decode panic: {:?}",
+									e.downcast::<String>()
+								)))
+							}
+						};
+						let frame = match frame {
+							Ok(frame) => frame,
+							Err(e) => {
+								return Err(CaptureError::DecodeError(e.to_string()));
+							}
 						};
 
 						Ok(CameraFrame {
@@ -148,7 +160,9 @@ impl CameraBackend for NativeCamera {
 						})
 					});
 
-					let _ = frame_tx.try_send(frame);
+					if let Err(mpsc::error::TrySendError::Closed(..)) = frame_tx.try_send(frame) {
+						break;
+					}
 				}
 			});
 		}
