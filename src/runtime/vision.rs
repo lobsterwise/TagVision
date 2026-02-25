@@ -1,6 +1,5 @@
 use std::{ops::Sub, sync::Arc};
 
-use nalgebra::Vector3;
 use tokio::sync::{
 	mpsc::{self, error::TrySendError},
 	Mutex,
@@ -16,7 +15,7 @@ use crate::{
 		},
 		distort::OpenCVCameraIntrinsics,
 		geom::{PnPSolution, Pose3DWithError, PoseUpdate},
-		solve::{p3p::P3P, PnPSolver},
+		solve::{p3p::P3P, pose_covariance, AprilTagHomographySolver, PnPSolver},
 	},
 	output::VisionOutput,
 	util::Timer,
@@ -53,7 +52,7 @@ impl VisionRuntime {
 				last_pose.clone(),
 				params.clone(),
 				layout.clone(),
-				tag_config.tag_size,
+				tag_config.tag_size_meters(),
 				filters.clone(),
 			);
 
@@ -189,7 +188,7 @@ fn solve_tags(
 		return None;
 	}
 
-	let mut solver = P3P::new(intrinsics.fx, intrinsics.fy, intrinsics.cx, intrinsics.cy);
+	let mut solver = AprilTagHomographySolver::new();
 	let mut solved_poses = Vec::new();
 	for detection in detections.iter() {
 		if detection.is_filtered(filters) {
@@ -201,8 +200,7 @@ fn solve_tags(
 			continue;
 		};
 
-		let undistorted = detection.get_undistorted_corners(intrinsics);
-		let solution = solver.solve(tag_corners_3d, undistorted);
+		let solution = solver.solve(layout, &detection, intrinsics, tag_size);
 		let Some(solution) = solution else {
 			continue;
 		};
@@ -215,6 +213,14 @@ fn solve_tags(
 						.unwrap_or(std::cmp::Ordering::Equal)
 				});
 				if let Some(pose) = best_pose {
+					let covariance = pose_covariance(
+						&pose.pose.r,
+						&pose.pose.t,
+						tag_corners_3d,
+						intrinsics.fx,
+						intrinsics.fy,
+						0.5,
+					);
 					solved_poses.push(pose);
 				}
 			}
@@ -234,12 +240,8 @@ fn solve_tags(
 			pose: acc.pose.add(&pose.pose),
 		});
 	let n = solved_poses.len() as f64;
-	pose_sum.pose.x /= n;
-	pose_sum.pose.y /= n;
-	pose_sum.pose.z /= n;
-	pose_sum.pose.rx /= n;
-	pose_sum.pose.ry /= n;
-	pose_sum.pose.rz /= n;
+	pose_sum.pose.t /= n;
+	pose_sum.pose.r = solved_poses.first().unwrap().pose.r;
 	pose_sum.error /= n;
 
 	Some(pose_sum)
@@ -248,13 +250,7 @@ fn solve_tags(
 /// Scores a given ambiguous pose option, with lower being better
 fn score_pose(pose: &Pose3DWithError, last_pose: Option<&Pose3DWithError>) -> f64 {
 	let dist_score = if let Some(last_pose) = last_pose {
-		Vector3::new(pose.pose.x, pose.pose.y, pose.pose.z)
-			.sub(Vector3::new(
-				last_pose.pose.x,
-				last_pose.pose.y,
-				last_pose.pose.z,
-			))
-			.norm()
+		pose.pose.t.sub(last_pose.pose.t).norm()
 	} else {
 		0.0
 	};

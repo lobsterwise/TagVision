@@ -60,6 +60,13 @@ pub struct TagConfig {
 	pub layout: AprilTagLayoutPreset,
 }
 
+impl TagConfig {
+	/// Gets the size of one side of the AprilTags in meters
+	pub fn tag_size_meters(&self) -> f64 {
+		self.tag_size * 0.0254
+	}
+}
+
 /// Filters for tag detections
 #[derive(Deserialize, Clone, Default)]
 pub struct TagFilters {

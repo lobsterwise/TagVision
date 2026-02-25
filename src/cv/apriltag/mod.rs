@@ -7,10 +7,10 @@ use imageproc::pixelops::interpolate;
 use std::{fmt::Debug, sync::Arc};
 
 use image::{GrayImage, Rgb, RgbImage};
-use nalgebra::{matrix, Matrix2x4, Matrix3x4, Matrix4x2, Vector2};
+use nalgebra::{matrix, Matrix2x4, Matrix3, Matrix3x4, Matrix4x2, Vector2};
 use params::AprilTagDetectorParams;
 
-use crate::config::TagFilters;
+use crate::{config::TagFilters, cv::geom::Pose3DWithError};
 
 use super::distort::OpenCVCameraIntrinsics;
 
@@ -120,6 +120,9 @@ impl AprilTagDetections {
 			id: raw_detection.id as u8,
 			hamming: raw_detection.hamming as u8,
 			decision_margin: raw_detection.decision_margin,
+			homography: Matrix3::from_row_slice(unsafe {
+				std::slice::from_raw_parts((*raw_detection.h).data, 3 * 3)
+			}),
 			center: Vector2::from_row_slice(&raw_detection.c),
 			corners: Matrix4x2::from_row_slice(raw_detection.p.as_flattened()).transpose(),
 		})
@@ -170,12 +173,77 @@ pub struct AprilTagDetection {
 	pub id: u8,
 	pub hamming: u8,
 	pub decision_margin: f32,
+	pub homography: Matrix3<f64>,
 	pub center: Vector2<f64>,
 	// Apriltag corners, with the bottom left being corner 0 and going counterclockwise from there
 	pub corners: Matrix2x4<f64>,
 }
 
 impl AprilTagDetection {
+	/// Solves for pose using homography on this detection
+	pub fn solve(&self, intrinsics: &OpenCVCameraIntrinsics, tag_width: f64) -> Pose3DWithError {
+		let mut t = [0.0; 3];
+		let mut t = _MatD {
+			nrows: 3,
+			ncols: 1,
+			data: (&mut t) as *mut _,
+		};
+		let mut r = [0.0; 3 * 3];
+		let mut r = _MatD {
+			nrows: 3,
+			ncols: 3,
+			data: (&mut r) as *mut _,
+		};
+		let mut pose = _AprilTagPose {
+			t: (&mut t) as *mut _,
+			r: (&mut r) as *mut _,
+		};
+
+		let mut h = _MatD {
+			nrows: 3,
+			ncols: 3,
+			// SAFETY: Estimation does not modify homography of detection
+			data: (self.homography.as_slice().as_ptr()) as *mut _,
+		};
+
+		// Get undistorted corners
+		let undistorted = self.get_undistorted_corners_pixels(intrinsics);
+
+		let corners = [
+			[undistorted.m11, undistorted.m21],
+			[undistorted.m12, undistorted.m22],
+			[undistorted.m13, undistorted.m23],
+			[undistorted.m14, undistorted.m24],
+		];
+
+		let det = _AprilTagDetection {
+			// SAFETY: Estimation does not access the family
+			family: std::ptr::null_mut(),
+			id: self.id as i32,
+			hamming: self.hamming as i32,
+			decision_margin: self.decision_margin,
+			h: (&mut h) as *mut _,
+			c: self.center.as_slice().try_into().unwrap(),
+			p: corners,
+		};
+
+		let mut info = _AprilTagDetectionInfo {
+			det: (&det) as *const _,
+			tagsize: tag_width,
+			fx: intrinsics.fx,
+			fy: intrinsics.fy,
+			cx: intrinsics.cx,
+			cy: intrinsics.cy,
+		};
+
+		let reproj_err = unsafe { estimate_tag_pose((&mut info) as *mut _, (&mut pose) as *mut _) };
+
+		Pose3DWithError {
+			pose: unsafe { pose.to_pose3d() },
+			error: reproj_err,
+		}
+	}
+
 	/// Gets the perimeter of this tag in pixels
 	pub fn perimeter(&self) -> f64 {
 		let side0 = (self.corners.column(1) - self.corners.column(0)).norm();
@@ -270,13 +338,60 @@ impl AprilTagDetection {
 		);
 	}
 
-	/// Undistorts this detection's corners using the given camera intrinsics
-	pub fn get_undistorted_corners(&self, intrinsics: &OpenCVCameraIntrinsics) -> Matrix3x4<f64> {
-		let v1 = intrinsics.unproject_one(&self.corners.column(0).clone_owned());
-		let v2 = intrinsics.unproject_one(&self.corners.column(1).clone_owned());
-		let v3 = intrinsics.unproject_one(&self.corners.column(2).clone_owned());
-		let v4 = intrinsics.unproject_one(&self.corners.column(3).clone_owned());
+	/// Undistorts this detection's corners using the given camera intrinsics, returning normalized rays
+	pub fn get_undistorted_corners_rays(
+		&self,
+		intrinsics: &OpenCVCameraIntrinsics,
+	) -> Matrix3x4<f64> {
+		let v1 = intrinsics
+			.unproject_one(&self.corners.column(0).clone_owned())
+			.normalize();
+		let v2 = intrinsics
+			.unproject_one(&self.corners.column(1).clone_owned())
+			.normalize();
+		let v3 = intrinsics
+			.unproject_one(&self.corners.column(2).clone_owned())
+			.normalize();
+		let v4 = intrinsics
+			.unproject_one(&self.corners.column(3).clone_owned())
+			.normalize();
 
 		Matrix3x4::from_columns(&[v1, v2, v3, v4])
+	}
+
+	/// Undistorts this detection's corners using the given camera intrinsics, returning new pixel coordinates
+	pub fn get_undistorted_corners_pixels(
+		&self,
+		intrinsics: &OpenCVCameraIntrinsics,
+	) -> Matrix2x4<f64> {
+		fn reproject_to_pixels(
+			v: Vector2<f64>,
+			intrinsics: &OpenCVCameraIntrinsics,
+		) -> Vector2<f64> {
+			Vector2::new(
+				v.x * intrinsics.fx + intrinsics.cx,
+				v.y * intrinsics.fy + intrinsics.cy,
+			)
+		}
+
+		let v1 = intrinsics
+			.unproject_one(&self.corners.column(0).clone_owned())
+			.xy();
+		let v2 = intrinsics
+			.unproject_one(&self.corners.column(1).clone_owned())
+			.xy();
+		let v3 = intrinsics
+			.unproject_one(&self.corners.column(2).clone_owned())
+			.xy();
+		let v4 = intrinsics
+			.unproject_one(&self.corners.column(3).clone_owned())
+			.xy();
+
+		Matrix2x4::from_columns(&[
+			reproject_to_pixels(v1, intrinsics),
+			reproject_to_pixels(v2, intrinsics),
+			reproject_to_pixels(v3, intrinsics),
+			reproject_to_pixels(v4, intrinsics),
+		])
 	}
 }

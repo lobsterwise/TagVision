@@ -1,5 +1,9 @@
 use std::{ffi::*, fmt::Debug};
 
+use nalgebra::{Matrix3, Vector3};
+
+use crate::cv::geom::Pose3D;
+
 #[link(name = "apriltag", kind = "static", modifiers = "+whole-archive")]
 extern "C" {
 	pub fn apriltag_detector_create() -> *mut _AprilTagDetector;
@@ -16,6 +20,7 @@ extern "C" {
 	pub fn apriltag_detections_destroy(detections: *mut _ZArray);
 	pub fn tag36h11_create() -> *mut _AprilTagFamily;
 	pub fn tag36h11_destroy(tf: *mut _AprilTagFamily);
+	pub fn estimate_tag_pose(info: *mut _AprilTagDetectionInfo, pose: *mut _AprilTagPose) -> f64;
 }
 
 #[derive(Debug, Clone)]
@@ -238,5 +243,35 @@ pub struct DebuggablePthreadCond(libc::pthread_cond_t);
 impl Debug for DebuggablePthreadCond {
 	fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
 		write!(f, "")
+	}
+}
+
+/// For pose estimation
+#[repr(C)]
+pub struct _AprilTagDetectionInfo {
+	pub det: *const _AprilTagDetection,
+	pub tagsize: c_double,
+	pub fx: c_double,
+	pub fy: c_double,
+	pub cx: c_double,
+	pub cy: c_double,
+}
+
+/// For pose estimation
+#[repr(C)]
+pub struct _AprilTagPose {
+	pub r: *mut _MatD,
+	pub t: *mut _MatD,
+}
+
+impl _AprilTagPose {
+	pub unsafe fn to_pose3d(&self) -> Pose3D {
+		let t = std::slice::from_raw_parts((*self.t).data, 3);
+		let r = std::slice::from_raw_parts((*self.r).data, 3 * 3);
+
+		Pose3D {
+			t: Vector3::from_row_slice(t),
+			r: Matrix3::from_row_slice(r),
+		}
 	}
 }

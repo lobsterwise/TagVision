@@ -2,27 +2,31 @@
 
 use nalgebra::{Matrix3, Matrix3x1, Matrix3x4, Matrix4, Matrix4x1};
 
-use crate::cv::geom::{PnPSolution, Pose3D, Pose3DWithError};
+use crate::cv::{
+	apriltag::{layout::AprilTagLayout, AprilTagDetection},
+	distort::OpenCVCameraIntrinsics,
+	geom::{PnPSolution, Pose3D, Pose3DWithError},
+};
 
 use super::{polynomial::solve_deg4, PnPSolver};
 
-pub struct P3P {
-	fx: f64,
-	fy: f64,
-	cx: f64,
-	cy: f64,
-}
+pub struct P3P;
 
 impl PnPSolver for P3P {
-	fn new(fx: f64, fy: f64, cx: f64, cy: f64) -> Self {
-		Self { fx, fy, cx, cy }
+	fn new() -> Self {
+		Self
 	}
 
 	fn solve(
 		&mut self,
-		object_points: Matrix3x4<f64>,
-		rays: Matrix3x4<f64>,
+		layout: &AprilTagLayout,
+		detection: &AprilTagDetection,
+		intrinsics: &OpenCVCameraIntrinsics,
+		tag_width: f64,
 	) -> Option<PnPSolution> {
+		let object_points = layout.get_tag_corners(detection.id, tag_width)?;
+		let rays = detection.get_undistorted_corners_rays(intrinsics);
+
 		let rx0 = rays[(0, 0)];
 		let ry0 = rays[(1, 0)];
 		let rz0 = rays[(2, 0)];
@@ -64,11 +68,11 @@ impl PnPSolver for P3P {
 				return None;
 			}
 
-			let mu3p = self.cx + self.fx * X3p / Z3p;
-			let mv3p = self.cy + self.fy * Y3p / Z3p;
+			let mu3p = intrinsics.cx + intrinsics.fx * X3p / Z3p;
+			let mv3p = intrinsics.cy + intrinsics.fy * Y3p / Z3p;
 
-			let reproj = (mu3p - (self.cx + self.fx * rx3 / rz3)).powi(2)
-				+ (mv3p - (self.cy + self.fy * ry3 / rz3)).powi(2);
+			let reproj = (mu3p - (intrinsics.cx + intrinsics.fx * rx3 / rz3)).powi(2)
+				+ (mv3p - (intrinsics.cy + intrinsics.fy * ry3 / rz3)).powi(2);
 
 			Some(Pose3DWithError {
 				pose: Pose3D::from_matrices(t, R),

@@ -1,8 +1,12 @@
 use std::{sync::Arc, time::Duration};
 
 use nt_client::{
-	data::NetworkTableData,
+	data::{DataType, NetworkTableData},
 	publish::{NewPublisherError, Publisher},
+	r#struct::{
+		byte::{ByteBuffer, ByteReader},
+		StructData,
+	},
 	subscribe::{ReceivedMessage, Subscriber, SubscriptionOptions},
 	topic::{Properties, Topic},
 	Client, ClientHandle, NewClientOptions,
@@ -48,7 +52,7 @@ impl ReconnectableClient {
 					let reconn_client = reconn_client.clone();
 					connect_result = client
 						.connect_setup(move |client| {
-							println!("Successfully reconnected!");
+							info!("Successfully reconnected!");
 							let handle = client.handle().clone();
 							tokio::spawn(
 								async move { reconn_client.reconnect_topics(&handle).await },
@@ -209,4 +213,33 @@ impl<T: NetworkTableData> PubSub<T> {
 
 		Ok((publisher, subscriber))
 	}
+}
+
+/// Struct array type publishable to NT
+pub struct StructArray<T>(pub Vec<T>);
+
+impl<T: StructData + StructDataSize> NetworkTableData for StructArray<T> {
+	fn data_type() -> DataType {
+		DataType::StructArray(T::struct_type_name())
+	}
+
+	fn from_value(value: rmpv::Value) -> Option<Self> {
+		match value {
+			rmpv::Value::Binary(bytes) => {
+				T::unpack_vec(&mut ByteReader::new(&bytes), bytes.len() / T::size()).map(Self)
+			}
+			_ => None,
+		}
+	}
+
+	fn into_value(self) -> rmpv::Value {
+		let mut buf = ByteBuffer::new();
+		T::pack_iter(self.0, &mut buf);
+		rmpv::Value::Binary(buf.into())
+	}
+}
+
+/// Trait for NT StructData types that have a size
+pub trait StructDataSize {
+	fn size() -> usize;
 }

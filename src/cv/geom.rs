@@ -1,28 +1,20 @@
-use nalgebra::{Matrix3, Matrix3x1};
+use nalgebra::{Isometry3, Matrix3, Matrix3x1, Translation3, UnitQuaternion, Vector3};
 
 use super::apriltag::layout::LayoutPose;
 
 #[derive(Clone, Debug, Default)]
 pub struct Pose3D {
-	pub x: f64,
-	pub y: f64,
-	pub z: f64,
-	pub rx: f64,
-	pub ry: f64,
-	pub rz: f64,
+	// Translation
+	pub t: Vector3<f64>,
+	// Rotation matrix
+	pub r: Matrix3<f64>,
 }
 
 impl Pose3D {
 	pub fn from_matrices(translation: Matrix3x1<f64>, rotation_matrix: Matrix3<f64>) -> Self {
-		let (rx, ry, rz) = rotation_matrix_to_euler(rotation_matrix);
-
 		Self {
-			x: translation[(0, 0)],
-			y: translation[(1, 0)],
-			z: translation[(2, 0)],
-			rx,
-			ry,
-			rz,
+			t: translation,
+			r: rotation_matrix,
 		}
 	}
 
@@ -35,9 +27,9 @@ impl Pose3D {
 		let qy2 = qy * qy;
 		let qz2 = qz * qz;
 		let rotation_matrix = nalgebra::matrix![
-			1.0 - 2.0 * (qy2 + qz2), 2.0 * (qx * qy - qw * qz), 2.0 * (qw * qz + qx * qz);
-			2.0 * (qx * qy + qw * qz), 1.0 - 2.0 * (qx2 + qz2), 2.0 * (qy * qz - qw * qx);
-			2.0 * (qx * qz - qw * qy), 2.0 * (qw * qx + qy * qz), 1.0 - 2.0 * (qx2 + qy2)
+			1.0 - 2.0*(qy2 + qz2),     2.0*(qx*qy - qw*qz),     2.0*(qx*qz + qw*qy);
+			2.0*(qx*qy + qw*qz),       1.0 - 2.0*(qx2 + qz2),   2.0*(qy*qz - qw*qx);
+			2.0*(qx*qz - qw*qy),       2.0*(qy*qz + qw*qx),     1.0 - 2.0*(qx2 + qy2)
 		];
 
 		let translation_matrix =
@@ -46,18 +38,24 @@ impl Pose3D {
 		Self::from_matrices(translation_matrix, rotation_matrix)
 	}
 
-	pub fn get_rotation_matrix(&self) -> Matrix3<f64> {
-		nalgebra::Rotation3::from_euler_angles(self.rx, self.ry, self.rz).into()
-	}
-
 	pub fn add(&self, other: &Self) -> Self {
 		Self {
-			x: self.x + other.x,
-			y: self.y + other.y,
-			z: self.z + other.z,
-			rx: self.rx + other.rx,
-			ry: self.ry + other.ry,
-			rz: self.rz + other.rz,
+			t: self.t + other.t,
+			r: self.r * other.r,
+		}
+	}
+
+	pub fn to_isometry(&self) -> Isometry3<f64> {
+		Isometry3::from_parts(
+			Translation3::from(self.t),
+			UnitQuaternion::from_matrix(&self.r),
+		)
+	}
+
+	pub fn from_isometry(isometry: Isometry3<f64>) -> Self {
+		Self {
+			t: isometry.translation.vector,
+			r: isometry.rotation.to_rotation_matrix().matrix().clone(),
 		}
 	}
 }

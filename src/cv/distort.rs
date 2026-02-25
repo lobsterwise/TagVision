@@ -77,7 +77,7 @@ impl OpenCVCameraIntrinsics {
 			y = y_next;
 		}
 
-		Vector3::new(x, y, 1.0).normalize()
+		Vector3::new(x, y, 1.0)
 	}
 }
 

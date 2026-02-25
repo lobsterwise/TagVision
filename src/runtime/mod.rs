@@ -52,7 +52,13 @@ impl Runtime {
 			&config.filters,
 		);
 
-		Output::new(output_receiver, config.network.clone(), &modules).await;
+		Output::new(
+			output_receiver,
+			config.network.clone(),
+			&modules,
+			layout.clone(),
+		)
+		.await;
 
 		Self {
 			config,

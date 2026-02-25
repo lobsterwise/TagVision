@@ -10,7 +10,7 @@ use std::{
 };
 
 use image::GrayImage;
-use nalgebra::UnitQuaternion;
+use nalgebra::{Isometry3, UnitQuaternion};
 use nt_client::{
 	math::{Pose3d, Quaternion, Rotation3d, Translation3d},
 	publish::NewPublisherError,
@@ -24,11 +24,11 @@ use tracing::{error, info};
 use crate::{
 	config::NetworkConfig,
 	cv::{
-		apriltag::AprilTagDetection,
-		geom::PoseUpdate,
+		apriltag::{layout::AprilTagLayout, AprilTagDetection},
+		geom::{Pose3D, PoseUpdate},
 		img_utils::{fast_gray_to_rgb, ImageAllocator},
 	},
-	output::utils::{PubSub, ReconnectableClient},
+	output::utils::{PubSub, ReconnectableClient, StructArray, StructDataSize},
 	util::Timer,
 };
 
@@ -42,6 +42,7 @@ impl Output {
 		input: Receiver<VisionOutput>,
 		network_config: NetworkConfig,
 		modules: &HashSet<String>,
+		layout: AprilTagLayout,
 	) -> Self {
 		let addr = if let Some(address) = &network_config.address {
 			nt_client::NTAddr::Custom(Ipv4Addr::from_str(address).unwrap())
@@ -54,11 +55,11 @@ impl Output {
 		let reconnect_interval = Duration::from_secs_f32(network_config.reconnect_interval);
 
 		let fps_pub = Arc::new(Mutex::new(None));
-		let struct_format_pub = Arc::new(Mutex::new(None));
+		let schema_pubs = Arc::new(Mutex::new(None));
 		let output_modules = Arc::new(Mutex::new(HashMap::new()));
 		if !network_config.disabled {
 			let fps_pub = fps_pub.clone();
-			let struct_format_pub = struct_format_pub.clone();
+			let schema_pubs = schema_pubs.clone();
 			let output_modules = output_modules.clone();
 			let modules = modules.clone();
 
@@ -104,15 +105,8 @@ impl Output {
 							*fps_pub.lock().await = Some(pubsub);
 						}
 
-						if let Ok(pubsub) = reconn_client
-							.get_topic(
-								format!("/.schema/struct:TagVisionPoseUpdate"),
-								Duration::from_millis(100),
-								&client,
-							)
-							.await
-						{
-							*struct_format_pub.lock().await = Some(pubsub);
+						if let Ok(pubs) = SchemaPublishers::new(&client, &reconn_client).await {
+							*schema_pubs.lock().await = Some(pubs);
 						}
 
 						info!("Output setup complete");
@@ -123,13 +117,14 @@ impl Output {
 
 		let thread_data = OutputThread {
 			input,
+			layout,
 			fps_timer: Timer::new(),
 			event_count: 0,
 			detection_count: 0,
 			image_allocator: ImageAllocator::new(),
 			output_modules,
 			fps_pub,
-			struct_format_pub,
+			schema_pubs,
 			detection_time_sum: 0.0,
 			estimation_time_sum: 0.0,
 		};
@@ -143,12 +138,13 @@ impl Output {
 /// Data contained on the output task
 struct OutputThread {
 	image_allocator: ImageAllocator,
+	layout: AprilTagLayout,
 	// Input
 	input: Receiver<VisionOutput>,
 	// Outputs
 	output_modules: Arc<Mutex<HashMap<String, OutputModule>>>,
 	fps_pub: Arc<Mutex<Option<PubSub<f64>>>>,
-	struct_format_pub: Arc<Mutex<Option<PubSub<rmpv::Value>>>>,
+	schema_pubs: Arc<Mutex<Option<SchemaPublishers>>>,
 	// Stats
 	fps_timer: Timer,
 	event_count: u16,
@@ -172,7 +168,7 @@ impl OutputThread {
 					.get_rgb_image(frame.width(), frame.height());
 				fast_gray_to_rgb(&frame, rgb_image);
 				// let mut rgb_image = DynamicImage::ImageLuma8(input.frame.image).into_rgb8();
-				for detection in output.detections {
+				for detection in &output.detections {
 					detection.draw(rgb_image);
 				}
 			}
@@ -181,7 +177,9 @@ impl OutputThread {
 				self.detection_count += 1;
 				if let Ok(mut lock) = self.output_modules.try_lock() {
 					if let Some(module) = lock.get_mut(&output.module) {
-						let _ = module.output(update).await;
+						let _ = module
+							.output(update, &output.detections, &self.layout)
+							.await;
 					}
 				}
 			}
@@ -191,12 +189,8 @@ impl OutputThread {
 			self.estimation_time_sum += output.estimation_time;
 		}
 
-		if let Ok(Some(lock)) = self.struct_format_pub.try_lock().as_deref_mut() {
-			let _ = lock
-				.publish(rmpv::Value::Binary(
-					TagVisionPoseUpdate::schema().0.into_bytes(),
-				))
-				.await;
+		if let Ok(Some(lock)) = self.schema_pubs.try_lock().as_deref_mut() {
+			lock.publish().await;
 		}
 
 		// Calculate stats
@@ -253,7 +247,7 @@ pub struct VisionOutput {
 /// NT pub/sub for a module
 struct OutputModule {
 	data_pubsub: PubSub<Struct<TagVisionPoseUpdate>>,
-	pose_pubsub: PubSub<Struct<Pose3d>>,
+	tags_pubsub: PubSub<StructArray<TagVisionDetection>>,
 }
 
 impl OutputModule {
@@ -267,59 +261,54 @@ impl OutputModule {
 		let data_pubsub = reconnectable_client
 			.get_topic(format!("{table}/Data"), Duration::from_micros(500), client)
 			.await?;
-		let pose_pubsub = reconnectable_client
-			.get_topic(format!("{table}/Pose"), Duration::from_millis(5), client)
+		let tags_pubsub = reconnectable_client
+			.get_topic(format!("{table}/Tags"), Duration::from_millis(10), client)
 			.await?;
 
 		Ok(Self {
 			data_pubsub,
-			pose_pubsub,
+			tags_pubsub,
 		})
 	}
 
 	/// Outputs an update to this module
-	async fn output(&mut self, update: PoseUpdate) {
+	async fn output(
+		&mut self,
+		update: PoseUpdate,
+		detections: &[AprilTagDetection],
+		layout: &AprilTagLayout,
+	) {
 		self.data_pubsub
 			.publish(Struct(TagVisionPoseUpdate::from_update(update.clone())))
 			.await;
 
-		let quat = UnitQuaternion::from_euler_angles(
-			update.pose.pose.rx,
-			update.pose.pose.ry,
-			update.pose.pose.rz,
-		);
-		self.pose_pubsub
-			.publish(Struct(Pose3d {
-				translation: Translation3d {
-					x: update.pose.pose.x,
-					y: update.pose.pose.y,
-					z: update.pose.pose.z,
-				},
-				rotation: Rotation3d {
-					quaternion: Quaternion {
-						x: quat.i,
-						y: quat.j,
-						z: quat.k,
-						w: quat.w,
-					},
-				},
-			}))
-			.await;
+		let default = Pose3D::default();
+		let tags = detections
+			.iter()
+			.map(|x| {
+				let pose = layout.get_tag_pose(x.id).unwrap_or(&default);
+				let pose = Pose3D::from_isometry(
+					pose.to_isometry() * Isometry3::translation(0.0, 0.0, 0.0),
+				);
+				let pose = create_sendable_pose(&pose);
+
+				TagVisionDetection {
+					id: x.id as i32,
+					pose,
+				}
+			})
+			.collect();
+
+		self.tags_pubsub.publish(StructArray(tags)).await;
 	}
 }
 
 /// A PoseUpdate that is sent over NT
 #[derive(Clone, Debug, StructData)]
-#[structdata(
-	schema = "double x; double y; double z; double rx; double ry; double rz; double error; int64 timestamp;"
-)]
+#[structdata(schema = "Pose3d pose; double error; int64 timestamp;")]
 struct TagVisionPoseUpdate {
-	x: f64,
-	y: f64,
-	z: f64,
-	rx: f64,
-	ry: f64,
-	rz: f64,
+	#[structdata(nested)]
+	pose: Pose3d,
 	error: f64,
 	timestamp: i64,
 }
@@ -327,14 +316,154 @@ struct TagVisionPoseUpdate {
 impl TagVisionPoseUpdate {
 	fn from_update(update: PoseUpdate) -> Self {
 		Self {
-			x: update.pose.pose.x,
-			y: update.pose.pose.y,
-			z: update.pose.pose.z,
-			rx: update.pose.pose.rx,
-			ry: update.pose.pose.ry,
-			rz: update.pose.pose.rz,
+			pose: create_sendable_pose(&update.pose.pose),
 			error: update.pose.error,
 			timestamp: update.timestamp as i64,
 		}
+	}
+}
+
+/// A tag detection that is sent over NT
+#[derive(Clone, Debug, StructData)]
+#[structdata(schema = "Pose3d pose; int32 id;")]
+struct TagVisionDetection {
+	#[structdata(nested)]
+	pose: Pose3d,
+	id: i32,
+}
+
+impl StructDataSize for TagVisionDetection {
+	fn size() -> usize {
+		60
+	}
+}
+
+/// Publishers for schema data
+struct SchemaPublishers {
+	tag_vision_pose_update: PubSub<rmpv::Value>,
+	tag_vision_detection: PubSub<rmpv::Value>,
+	quaternion: PubSub<rmpv::Value>,
+	rotation3d: PubSub<rmpv::Value>,
+	translation3d: PubSub<rmpv::Value>,
+	pose3d: PubSub<rmpv::Value>,
+}
+
+impl SchemaPublishers {
+	pub async fn new(
+		client: &ClientHandle,
+		reconnectable_client: &ReconnectableClient,
+	) -> Result<Self, NewPublisherError> {
+		let tag_vision_pose_update = reconnectable_client
+			.get_topic(
+				format!("/.schema/struct:TagVisionPoseUpdate"),
+				Duration::from_millis(100),
+				&client,
+			)
+			.await?;
+
+		let tag_vision_detection = reconnectable_client
+			.get_topic(
+				format!("/.schema/struct:TagVisionDetection"),
+				Duration::from_millis(100),
+				&client,
+			)
+			.await?;
+
+		let quaternion = reconnectable_client
+			.get_topic(
+				format!("/.schema/struct:Quaternion"),
+				Duration::from_millis(100),
+				&client,
+			)
+			.await?;
+
+		let rotation3d = reconnectable_client
+			.get_topic(
+				format!("/.schema/struct:Rotation3d"),
+				Duration::from_millis(100),
+				&client,
+			)
+			.await?;
+
+		let translation3d = reconnectable_client
+			.get_topic(
+				format!("/.schema/struct:Translation3d"),
+				Duration::from_millis(100),
+				&client,
+			)
+			.await?;
+
+		let pose3d = reconnectable_client
+			.get_topic(
+				format!("/.schema/struct:Pose3d"),
+				Duration::from_millis(100),
+				&client,
+			)
+			.await?;
+
+		Ok(Self {
+			tag_vision_pose_update,
+			tag_vision_detection,
+			quaternion,
+			rotation3d,
+			translation3d,
+			pose3d,
+		})
+	}
+
+	pub async fn publish(&mut self) {
+		let _ = self
+			.tag_vision_pose_update
+			.publish(rmpv::Value::Binary(
+				TagVisionPoseUpdate::schema().0.into_bytes(),
+			))
+			.await;
+
+		let _ = self
+			.tag_vision_detection
+			.publish(rmpv::Value::Binary(
+				TagVisionDetection::schema().0.into_bytes(),
+			))
+			.await;
+
+		let _ = self
+			.quaternion
+			.publish(rmpv::Value::Binary(Quaternion::schema().0.into_bytes()))
+			.await;
+
+		let _ = self
+			.rotation3d
+			.publish(rmpv::Value::Binary(Rotation3d::schema().0.into_bytes()))
+			.await;
+
+		let _ = self
+			.translation3d
+			.publish(rmpv::Value::Binary(Translation3d::schema().0.into_bytes()))
+			.await;
+
+		let _ = self
+			.pose3d
+			.publish(rmpv::Value::Binary(Pose3d::schema().0.into_bytes()))
+			.await;
+	}
+}
+
+fn create_sendable_pose(pose: &Pose3D) -> Pose3d {
+	let quat = UnitQuaternion::from_matrix(&pose.r);
+
+	Pose3d {
+		translation: Translation3d {
+			x: pose.t.x,
+			y: pose.t.y,
+			z: pose.t.z,
+		},
+		rotation: Rotation3d {
+			quaternion: Quaternion {
+				x: quat.i,
+				y: quat.j,
+				z: quat.k,
+				w: quat.w,
+			},
+		},
 	}
 }

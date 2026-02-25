@@ -31,10 +31,6 @@ impl AprilTagLayoutPreset {
 			Self::Layout2026Welded => include_str!("layouts/2026-welded.json"),
 		}
 	}
-
-	fn is_red_relative(&self) -> bool {
-		true
-	}
 }
 
 impl AprilTagLayout {
@@ -52,14 +48,8 @@ impl AprilTagLayout {
 	pub fn load_from_preset(layout: AprilTagLayoutPreset) -> Self {
 		let data = layout.get_layout();
 
-		let mut deser: AprilTagLayoutDeser =
+		let deser: AprilTagLayoutDeser =
 			serde_json::from_str(data).expect("Preset layout is invalid");
-
-		if layout.is_red_relative() {
-			for tag in &mut deser.tags {
-				tag.pose.translation.x = deser.field.length - tag.pose.translation.x;
-			}
-		}
 
 		Self::load(deser)
 	}
@@ -83,12 +73,11 @@ impl AprilTagLayout {
 		let corners = Matrix3x4::from_columns(&[c1, c2, c3, c4]);
 
 		// Rotate to match the tag's plane
-		let mut corners = center.get_rotation_matrix() * corners;
+		let mut corners = center.r * corners;
 
 		// Translate to match the tag's position
-		let translation = Vector3::new(center.x, center.y, center.z);
 		for mut col in corners.column_iter_mut() {
-			col += translation;
+			col += center.t;
 		}
 
 		Some(corners)
@@ -145,19 +134,15 @@ pub struct LayoutQuaternion {
 
 #[cfg(test)]
 mod tests {
-	use nalgebra::matrix;
+	use nalgebra::{matrix, Matrix3, Rotation3};
 
 	use super::*;
 
 	#[test]
 	fn test_tag_corners_simple() {
 		let tag_pose = Pose3D {
-			x: 0.0,
-			y: 0.0,
-			z: 0.0,
-			rx: 0.0,
-			ry: 0.0,
-			rz: 0.0,
+			t: matrix![0.0; 0.0; 0.0;],
+			r: Matrix3::zeros(),
 		};
 		let expected = matrix![
 			0.0, 0.0, 0.0, 0.0;
@@ -170,12 +155,8 @@ mod tests {
 	#[test]
 	fn test_tag_corners_translation_only() {
 		let tag_pose = Pose3D {
-			x: 5.0,
-			y: 0.0,
-			z: 2.0,
-			rx: 0.0,
-			ry: 0.0,
-			rz: 0.0,
+			t: matrix![5.0; 0.0; 2.0;],
+			r: Matrix3::zeros(),
 		};
 		let expected = matrix![
 			5.0, 5.0, 5.0, 5.0;
@@ -188,12 +169,8 @@ mod tests {
 	#[test]
 	fn test_tag_corners_90deg_z() {
 		let tag_pose = Pose3D {
-			x: 0.0,
-			y: 0.0,
-			z: 0.0,
-			rx: 0.0,
-			ry: 0.0,
-			rz: 90.0_f64.to_radians(),
+			t: matrix![0.0; 0.0; 0.0;],
+			r: Rotation3::from_euler_angles(0.0, 0.0, 90.0_f64.to_radians()).into_inner(),
 		};
 		let expected = matrix![
 			-1.0, 1.0, 1.0, -1.0;
