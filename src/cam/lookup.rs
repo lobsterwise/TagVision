@@ -1,7 +1,6 @@
-use std::{
-	path::{Path, PathBuf},
-	process::Command,
-};
+use std::path::PathBuf;
+
+use crate::sys::readlink;
 
 /// Looks up a v4l camera ID (from /dev/v4l/by-id) to find it's index
 pub fn lookup_camera_id_linux(camera_id: &str) -> std::io::Result<u32> {
@@ -33,14 +32,4 @@ pub fn lookup_camera_id_linux(camera_id: &str) -> std::io::Result<u32> {
 			"Failed to parse camera index".to_string(),
 		)
 	})
-}
-
-/// Reads a symlink to find the target path
-fn readlink(src: &Path) -> std::io::Result<PathBuf> {
-	let mut command = Command::new("readlink");
-	command.arg("-f").arg(src);
-	let output = command.output()?;
-	Ok(PathBuf::from(
-		String::from_utf8_lossy(&output.stdout).trim(),
-	))
 }

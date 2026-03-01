@@ -1,0 +1,48 @@
+use std::{
+	env::VarError,
+	path::{Path, PathBuf},
+	process::Command,
+};
+
+/// Generates the systemd service file
+pub fn generate_service(config_path: &str) -> std::io::Result<String> {
+	let executable_path = std::env::current_exe()?;
+	let executable_path = executable_path.to_string_lossy();
+
+	let Ok(user) = std::env::var("USER") else {
+		return Err(std::io::Error::new(
+			std::io::ErrorKind::NotFound,
+			"User environment variable missing",
+		));
+	};
+
+	Ok(format!(
+		r#"[Unit]
+Description=AprilTag Vision System
+
+[Service]
+Type=simple
+User={user}
+Restart=always
+RestartSec=3
+ExecStart={executable_path} --config {config_path}
+
+[Install]
+WantedBy=default.target"#
+	))
+}
+
+/// Reads a symlink to find the target path
+pub fn readlink(src: &Path) -> std::io::Result<PathBuf> {
+	let mut command = Command::new("readlink");
+	command.arg("-f").arg(src);
+	let output = command.output()?;
+	Ok(PathBuf::from(
+		String::from_utf8_lossy(&output.stdout).trim(),
+	))
+}
+
+pub fn get_service_path() -> Result<PathBuf, VarError> {
+	let home = std::env::var("HOME")?;
+	Ok(PathBuf::from(home).join(".config/systemd/user/tag_vision.service"))
+}
