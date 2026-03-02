@@ -42,6 +42,7 @@ pub fn readlink(src: &Path) -> std::io::Result<PathBuf> {
 	))
 }
 
+/// Gets the path to the shared systemd service file
 pub fn get_service_path() -> Result<PathBuf, VarError> {
 	let home = std::env::var("HOME")?;
 	Ok(PathBuf::from(home).join(".config/systemd/user/tag_vision.service"))

@@ -31,7 +31,6 @@ pub struct Config {
 	pub pose_estimator: PoseEstimatorOption,
 }
 
-
 /// Different backend implementations for pose estimation
 #[derive(Deserialize, Default, Clone, Copy)]
 pub enum PoseEstimatorOption {
@@ -59,10 +58,17 @@ pub struct NetworkConfig {
 	/// Time to wait between reconnects, in seconds
 	#[serde(default = "default_reconnect_interval")]
 	pub reconnect_interval: f32,
+	/// Whether to enable CameraServer output
+	#[serde(default = "default_camera_server")]
+	pub camera_server: bool,
 }
 
 fn default_reconnect_interval() -> f32 {
 	2.0
+}
+
+fn default_camera_server() -> bool {
+	true
 }
 
 /// Configuration for the tags

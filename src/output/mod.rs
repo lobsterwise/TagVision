@@ -1,3 +1,5 @@
+/// CameraServer protocol
+mod cs;
 /// Utilities for interfacing with our nt4 crate
 pub mod utils;
 
@@ -18,7 +20,10 @@ use nt_client::{
 	ClientHandle, NewClientOptions,
 };
 use nt_client_macros::StructData;
-use tokio::sync::{mpsc::Receiver, Mutex};
+use tokio::sync::{
+	mpsc::{Receiver, Sender},
+	Mutex,
+};
 use tracing::{error, info};
 
 use crate::{
@@ -28,7 +33,10 @@ use crate::{
 		geom::{Pose3D, PoseUpdate},
 		img_utils::{fast_gray_to_rgb, ImageAllocator},
 	},
-	output::utils::{PubSub, ReconnectableClient, StructArray, StructDataSize},
+	output::{
+		cs::{CameraServer, CameraServerInput},
+		utils::{PubSub, ReconnectableClient, StructArray, StructDataSize},
+	},
 	util::Timer,
 };
 
@@ -57,11 +65,13 @@ impl Output {
 		let fps_pub = Arc::new(Mutex::new(None));
 		let schema_pubs = Arc::new(Mutex::new(None));
 		let output_modules = Arc::new(Mutex::new(HashMap::new()));
+		let camera_server = Arc::new(Mutex::new(None));
 		if !network_config.disabled {
 			let fps_pub = fps_pub.clone();
 			let schema_pubs = schema_pubs.clone();
 			let output_modules = output_modules.clone();
-			let modules = modules.clone();
+			let modules: Vec<_> = modules.iter().cloned().collect();
+			let camera_server = camera_server.clone();
 
 			let options = NewClientOptions {
 				addr,
@@ -78,9 +88,9 @@ impl Output {
 					tokio::spawn(async move {
 						// I want to initialize all the topics asynchronously, but it creates data type mismatch errors, so we have to do it synchronously
 						let mut output_modules2: HashMap<String, OutputModule> = HashMap::new();
-						for module_id in modules {
+						for module_id in &modules {
 							let module =
-								OutputModule::new(&module_id, &client, &reconn_client).await;
+								OutputModule::new(module_id, &client, &reconn_client).await;
 							let module =
 								match module {
 									Ok(module) => module,
@@ -109,6 +119,22 @@ impl Output {
 							*schema_pubs.lock().await = Some(pubs);
 						}
 
+						if network_config.camera_server {
+							let (cs_tx, cs_rx) = tokio::sync::mpsc::channel(5);
+							match CameraServer::new(&modules, &client, &reconn_client, cs_rx).await
+							{
+								Ok(cs) => {
+									tokio::spawn(async move {
+										cs.run_forever().await;
+									});
+									*camera_server.lock().await = Some(cs_tx);
+								}
+								Err(e) => {
+									error!("Failed to initialize camera server: {e}");
+								}
+							}
+						}
+
 						info!("Output setup complete");
 					});
 				},
@@ -125,6 +151,7 @@ impl Output {
 			output_modules,
 			fps_pub,
 			schema_pubs,
+			camera_server,
 			detection_time_sum: 0.0,
 			estimation_time_sum: 0.0,
 		};
@@ -145,6 +172,7 @@ struct OutputThread {
 	output_modules: Arc<Mutex<HashMap<String, OutputModule>>>,
 	fps_pub: Arc<Mutex<Option<PubSub<f64>>>>,
 	schema_pubs: Arc<Mutex<Option<SchemaPublishers>>>,
+	camera_server: Arc<Mutex<Option<Sender<CameraServerInput>>>>,
 	// Stats
 	fps_timer: Timer,
 	event_count: u16,
@@ -170,6 +198,12 @@ impl OutputThread {
 				// let mut rgb_image = DynamicImage::ImageLuma8(input.frame.image).into_rgb8();
 				for detection in &output.detections {
 					detection.draw(rgb_image);
+				}
+				if let Ok(Some(lock)) = self.camera_server.try_lock().as_deref() {
+					let _ = lock.try_send(CameraServerInput {
+						module_id: output.module.clone(),
+						frame: rgb_image.clone(),
+					});
 				}
 			}
 
