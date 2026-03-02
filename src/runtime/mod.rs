@@ -50,6 +50,7 @@ impl Runtime {
 			&config.tags,
 			&layout,
 			&config.filters,
+			&config.pose_estimator,
 		);
 
 		Output::new(

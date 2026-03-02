@@ -10,6 +10,9 @@ pub struct AprilTagDetectorParams {
 	/// Generally the speed will only change when the parameter moves between whole numbers. (i.e. 2.0 will be much faster than 1.99)
 	#[serde(default = "default_quad_decimate")]
 	pub quad_decimate: f32,
+	/// Whether to enable time profile reporting
+	#[serde(default)]
+	pub time_profile: bool,
 }
 
 impl Default for AprilTagDetectorParams {
@@ -17,12 +20,13 @@ impl Default for AprilTagDetectorParams {
 		Self {
 			thread_count: default_thread_count(),
 			quad_decimate: default_quad_decimate(),
+			time_profile: false,
 		}
 	}
 }
 
 fn default_thread_count() -> u8 {
-	1
+	2
 }
 
 fn default_quad_decimate() -> f32 {

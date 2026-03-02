@@ -60,24 +60,6 @@ impl Pose3D {
 	}
 }
 
-fn rotation_matrix_to_euler(rotation_matrix: Matrix3<f64>) -> (f64, f64, f64) {
-	let sy = (rotation_matrix[(0, 0)].powi(2) + rotation_matrix[(1, 0)].powi(2)).sqrt();
-
-	if sy >= 1.0e-6 {
-		(
-			rotation_matrix[(2, 1)].atan2(rotation_matrix[(2, 2)]),
-			(-rotation_matrix[(2, 0)]).atan2(sy),
-			rotation_matrix[(1, 0)].atan2(rotation_matrix[(0, 0)]),
-		)
-	} else {
-		(
-			(-rotation_matrix[(2, 1)]).atan2(rotation_matrix[(2, 2)]),
-			(-rotation_matrix[(2, 0)]).atan2(sy),
-			0.0,
-		)
-	}
-}
-
 /// A 3D pose with a reprojection error
 #[derive(Clone, Debug, Default)]
 pub struct Pose3DWithError {

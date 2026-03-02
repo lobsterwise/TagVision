@@ -21,6 +21,7 @@ async fn get_image_detections(image: &[u8]) -> AprilTagDetections {
 	let detector = AprilTagDetector::new(AprilTagDetectorParams {
 		thread_count: 1,
 		quad_decimate: 3.0,
+		time_profile: false,
 	});
 
 	let image = image::load_from_memory(image).unwrap().into_luma8();

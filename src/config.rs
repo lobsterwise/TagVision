@@ -26,6 +26,20 @@ pub struct Config {
 	/// Configuration for the runtime
 	#[serde(default)]
 	pub runtime: RuntimeConfig,
+	/// Pose estimator
+	#[serde(default)]
+	pub pose_estimator: PoseEstimatorOption,
+}
+
+
+/// Different backend implementations for pose estimation
+#[derive(Deserialize, Default, Clone, Copy)]
+pub enum PoseEstimatorOption {
+	#[serde(rename = "homography")]
+	#[default]
+	Homography,
+	#[serde(rename = "p3p")]
+	P3P,
 }
 
 /// Configuration for the network

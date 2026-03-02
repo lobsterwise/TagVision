@@ -1,6 +1,5 @@
 use nalgebra::{
-	matrix, ArrayStorage, Const, Isometry3, Matrix, Matrix3, Matrix3x4, Matrix6, Rotation3,
-	Translation3, UnitQuaternion, Vector3,
+	matrix, ArrayStorage, Const, Matrix, Matrix3, Matrix3x4, Matrix6, Rotation3, Vector3,
 };
 
 use crate::cv::{

@@ -7,7 +7,7 @@ use tokio::sync::{
 
 use crate::{
 	cam::CameraFrame,
-	config::{RuntimeConfig, TagConfig, TagFilters},
+	config::{PoseEstimatorOption, RuntimeConfig, TagConfig, TagFilters},
 	cv::{
 		apriltag::{
 			layout::AprilTagLayout, params::AprilTagDetectorParams, AprilTagDetections,
@@ -36,6 +36,7 @@ impl VisionRuntime {
 		tag_config: &TagConfig,
 		layout: &AprilTagLayout,
 		filters: &TagFilters,
+		estimator: &PoseEstimatorOption,
 	) -> (Self, mpsc::Receiver<VisionOutput>) {
 		// Create the output channel
 		let (output_sender, output_receiver) = mpsc::channel::<VisionOutput>(3);
@@ -49,6 +50,7 @@ impl VisionRuntime {
 			let vision_thread_data = VisionThread::new(
 				receiver.clone(),
 				output_sender.clone(),
+				estimator,
 				last_pose.clone(),
 				params.clone(),
 				layout.clone(),
@@ -89,6 +91,7 @@ pub struct VisionThreadInput {
 pub struct VisionThread {
 	input: Arc<Mutex<mpsc::Receiver<VisionThreadInput>>>,
 	output: mpsc::Sender<VisionOutput>,
+	estimator: Box<dyn PnPSolver + Send>,
 	last_pose: Arc<Mutex<Option<Pose3DWithError>>>,
 	params: AprilTagDetectorParams,
 	layout: AprilTagLayout,
@@ -100,15 +103,22 @@ impl VisionThread {
 	fn new(
 		input_channel: Arc<Mutex<mpsc::Receiver<VisionThreadInput>>>,
 		output_channel: mpsc::Sender<VisionOutput>,
+		estimator: &PoseEstimatorOption,
 		last_pose: Arc<Mutex<Option<Pose3DWithError>>>,
 		params: AprilTagDetectorParams,
 		layout: AprilTagLayout,
 		tag_size: f64,
 		filters: TagFilters,
 	) -> Self {
+		let estimator: Box<dyn PnPSolver + Send> = match estimator {
+			PoseEstimatorOption::Homography => Box::new(AprilTagHomographySolver::new()),
+			PoseEstimatorOption::P3P => Box::new(P3P::new()),
+		};
+
 		Self {
 			input: input_channel,
 			output: output_channel,
+			estimator,
 			last_pose,
 			params,
 			layout,
@@ -141,6 +151,7 @@ impl VisionThread {
 			timer.restart();
 			let last_pose = self.last_pose.lock().await.clone();
 			let pose = solve_tags(
+				&mut self.estimator,
 				&detections,
 				&input.intrinsics,
 				&self.layout,
@@ -177,6 +188,7 @@ impl VisionThread {
 
 /// Solve tags, returning the pose and average ambiguity
 fn solve_tags(
+	solver: &mut Box<dyn PnPSolver + Send>,
 	detections: &AprilTagDetections,
 	intrinsics: &OpenCVCameraIntrinsics,
 	layout: &AprilTagLayout,
@@ -188,7 +200,6 @@ fn solve_tags(
 		return None;
 	}
 
-	let mut solver = AprilTagHomographySolver::new();
 	let mut solved_poses = Vec::new();
 	for detection in detections.iter() {
 		if detection.is_filtered(filters) {

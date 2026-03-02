@@ -17,6 +17,7 @@ use super::distort::OpenCVCameraIntrinsics;
 /// Wrapper around the AprilTag library for detecting AprilTags
 pub struct AprilTagDetector {
 	inner: Arc<AprilTagDetectorInner>,
+	time_profile: bool,
 }
 
 struct AprilTagDetectorInner {
@@ -45,7 +46,10 @@ impl AprilTagDetector {
 
 		let inner = Arc::new(AprilTagDetectorInner { inner, family });
 
-		Self { inner }
+		Self {
+			inner,
+			time_profile: params.time_profile,
+		}
 	}
 
 	/// Detect markers in an image
@@ -67,6 +71,12 @@ impl AprilTagDetector {
 			AprilTagDetections { detections }
 		})
 		.await;
+
+		if self.time_profile {
+			unsafe {
+				(*(*self.inner.inner).tp).report();
+			}
+		}
 
 		match result {
 			Ok(result) => result,
