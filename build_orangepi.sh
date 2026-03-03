@@ -14,4 +14,4 @@ cmake -B build \
 	-DBUILD_PYTHON_WRAPPER=OFF
 sudo DESTDIR=/usr/aarch64-linux-gnu cmake --build build --target install
 cd ..
-cargo build --release --target aarch64-unknown-linux-gnu --no-default-features --features native
+cargo build --profile deploy --target aarch64-unknown-linux-gnu --no-default-features --features native
