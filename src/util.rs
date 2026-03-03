@@ -1,4 +1,7 @@
-use std::time::{Duration, Instant};
+use std::{
+	collections::VecDeque,
+	time::{Duration, Instant},
+};
 
 /// A running timer
 pub struct Timer {
@@ -38,5 +41,30 @@ impl Timer {
 		} else {
 			false
 		}
+	}
+}
+
+/// Moving average of floats
+pub struct MovingAverage {
+	window: VecDeque<f64>,
+	size: usize,
+}
+
+impl MovingAverage {
+	pub fn new(size: usize) -> Self {
+		Self {
+			window: VecDeque::with_capacity(size),
+			size,
+		}
+	}
+
+	/// Adds a value and calculates the average
+	pub fn calculate(&mut self, value: f64) -> f64 {
+		self.window.push_back(value);
+		if self.window.len() > self.size {
+			self.window.pop_front();
+		}
+
+		self.window.iter().sum::<f64>() / self.size as f64
 	}
 }

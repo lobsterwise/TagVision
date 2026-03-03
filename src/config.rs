@@ -128,6 +128,9 @@ pub struct CameraConfig {
 	/// The backend for this camera
 	#[serde(default)]
 	pub backend: CameraBackendOption,
+	/// Frame format for the camera
+	#[serde(default)]
+	pub frame_format: FrameFormatOption,
 	/// The resolution width of the camera in pixels
 	pub width: u16,
 	/// The resolution height of the camera in pixels
@@ -163,6 +166,16 @@ pub enum CameraBackendOption {
 	GStreamer,
 	#[serde(rename = "fake")]
 	Fake,
+}
+
+/// Different frame formats for cameras
+#[derive(Deserialize, Default, Clone, Copy)]
+pub enum FrameFormatOption {
+	#[default]
+	#[serde(rename = "mjpeg")]
+	MJPEG,
+	#[serde(rename = "yuyv")]
+	YUYV,
 }
 
 /// Configuration for the runtime

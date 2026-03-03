@@ -24,8 +24,9 @@ Description=AprilTag Vision System
 Type=simple
 User={user}
 Restart=always
-RestartSec=3
+RestartSec=2
 ExecStart={executable_path} --config {config_path}
+Nice=1
 
 [Install]
 WantedBy=default.target"#

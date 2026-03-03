@@ -174,6 +174,7 @@ impl VisionThread {
 				module: input.module,
 				update,
 				frame: Some(input.frame.image),
+				timestamp: input.frame.timestamp,
 				detections: detections.to_vec(),
 				detection_time: detection_time.as_secs_f32(),
 				estimation_time: estimation_time.as_secs_f32(),

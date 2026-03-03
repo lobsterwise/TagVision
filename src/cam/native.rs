@@ -17,7 +17,7 @@ use tracing::{error, info};
 
 use crate::{
 	cam::FrameResult,
-	config::{CameraConfig, RuntimeConfig},
+	config::{CameraConfig, FrameFormatOption, RuntimeConfig},
 };
 
 use super::{CameraBackend, CameraFrame, CameraSetupError, CaptureError};
@@ -40,7 +40,12 @@ impl CameraBackend for NativeCamera {
 
 		let resolution = Resolution::new(config.width as u32, config.height as u32);
 
-		let camera_format = CameraFormat::new(resolution, FrameFormat::MJPEG, config.fps as u32);
+		let frame_format = match config.frame_format {
+			FrameFormatOption::MJPEG => FrameFormat::MJPEG,
+			FrameFormatOption::YUYV => FrameFormat::YUYV,
+		};
+
+		let camera_format = CameraFormat::new(resolution, frame_format, config.fps as u32);
 		let format = RequestedFormat::<'static>::new::<LumaFormat>(RequestedFormatType::Exact(
 			camera_format,
 		));
@@ -137,22 +142,26 @@ impl CameraBackend for NativeCamera {
 							.unwrap_or_default()
 							.as_millis();
 
-						let frame = catch_unwind(|| frame.decode_image::<LumaFormat>());
-						let frame = match frame {
-							Ok(frame) => frame,
-							Err(e) => {
-								return Err(CaptureError::GeneralError(format!(
-									"Decode panic: {:?}",
-									e.downcast::<String>()
-								)))
+						let frame = match frame_format {
+							FrameFormat::MJPEG => turbojpeg::decompress_image(frame.buffer())
+								.map_err(|e| CaptureError::DecodeError(e.to_string())),
+							_ => {
+								let frame = catch_unwind(|| frame.decode_image::<LumaFormat>());
+								let frame = match frame {
+									Ok(frame) => frame,
+									Err(e) => {
+										return Err(CaptureError::GeneralError(format!(
+											"Decode panic: {:?}",
+											e.downcast::<String>()
+										)))
+									}
+								};
+
+								frame.map_err(|e| CaptureError::DecodeError(e.to_string()))
 							}
 						};
-						let frame = match frame {
-							Ok(frame) => frame,
-							Err(e) => {
-								return Err(CaptureError::DecodeError(e.to_string()));
-							}
-						};
+
+						let frame = frame?;
 
 						Ok(CameraFrame {
 							image: Arc::new(frame),

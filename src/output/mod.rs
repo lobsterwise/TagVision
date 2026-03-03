@@ -8,7 +8,7 @@ use std::{
 	net::Ipv4Addr,
 	str::FromStr,
 	sync::Arc,
-	time::Duration,
+	time::{Duration, Instant, SystemTime, UNIX_EPOCH},
 };
 
 use image::GrayImage;
@@ -37,7 +37,7 @@ use crate::{
 		cs::{CameraServer, CameraServerInput},
 		utils::{PubSub, ReconnectableClient, StructArray, StructDataSize},
 	},
-	util::Timer,
+	util::{MovingAverage, Timer},
 };
 
 static BASE_TABLE: &str = "TagVision";
@@ -156,7 +156,9 @@ impl Output {
 		let thread_data = OutputThread {
 			input,
 			layout,
-			fps_timer: Timer::new(),
+			stats_timer: Timer::new(),
+			last_frame_time: None,
+			fps_average: MovingAverage::new(100),
 			event_count: 0,
 			detection_count: 0,
 			image_allocator: ImageAllocator::new(),
@@ -166,6 +168,7 @@ impl Output {
 			camera_server,
 			detection_time_sum: 0.0,
 			estimation_time_sum: 0.0,
+			full_pipeline_sum: 0.0,
 		};
 
 		tokio::spawn(thread_data.run_forever());
@@ -186,11 +189,14 @@ struct OutputThread {
 	schema_pubs: Arc<Mutex<Option<SchemaPublishers>>>,
 	camera_server: Arc<Mutex<Option<Sender<CameraServerInput>>>>,
 	// Stats
-	fps_timer: Timer,
+	stats_timer: Timer,
+	last_frame_time: Option<Instant>,
+	fps_average: MovingAverage,
 	event_count: u16,
 	detection_count: u16,
 	detection_time_sum: f32,
 	estimation_time_sum: f32,
+	full_pipeline_sum: f32,
 }
 
 impl OutputThread {
@@ -207,7 +213,6 @@ impl OutputThread {
 					.image_allocator
 					.get_rgb_image(frame.width(), frame.height());
 				fast_gray_to_rgb(&frame, rgb_image);
-				// let mut rgb_image = DynamicImage::ImageLuma8(input.frame.image).into_rgb8();
 				for detection in &output.detections {
 					detection.draw(rgb_image);
 				}
@@ -221,6 +226,7 @@ impl OutputThread {
 
 			if let Some(update) = output.update {
 				self.detection_count += 1;
+
 				if let Ok(mut lock) = self.output_modules.try_lock() {
 					if let Some(module) = lock.get_mut(&output.module) {
 						let _ = module
@@ -233,6 +239,12 @@ impl OutputThread {
 			self.event_count += 1;
 			self.detection_time_sum += output.detection_time;
 			self.estimation_time_sum += output.estimation_time;
+			let now = SystemTime::now()
+				.duration_since(UNIX_EPOCH)
+				.unwrap_or_default()
+				.as_millis();
+			let diff = now - output.timestamp;
+			self.full_pipeline_sum += diff as f32;
 		}
 
 		if let Ok(Some(lock)) = self.schema_pubs.try_lock().as_deref_mut() {
@@ -240,38 +252,50 @@ impl OutputThread {
 		}
 
 		// Calculate stats
-		let stats_interval = 1.5;
-		if self
-			.fps_timer
-			.interval(Duration::from_secs_f32(stats_interval))
-		{
-			let event_count_f32 = self.event_count as f32;
-			let fps = event_count_f32 / stats_interval;
-			let detection_ratio = if self.event_count == 0 {
+
+		let now = Instant::now();
+		let fps = if let Some(last_frame_time) = &self.last_frame_time {
+			let secs = (now - *last_frame_time).as_secs_f64();
+			if secs == 0.0 {
 				0.0
 			} else {
-				self.detection_count as f32 / event_count_f32
+				1.0 / secs
+			}
+		} else {
+			0.0
+		};
+		let fps = self.fps_average.calculate(fps);
+		self.last_frame_time = Some(now);
+
+		if let Ok(Some(lock)) = self.fps_pub.try_lock().as_deref_mut() {
+			lock.publish(fps as f64).await;
+		}
+
+		// Console printing
+		let stats_interval = 1.5;
+		if self
+			.stats_timer
+			.interval(Duration::from_secs_f32(stats_interval))
+		{
+			let n = if self.event_count == 0 {
+				1.0
+			} else {
+				self.event_count as f32
 			};
 
-			let (detection_time, estimation_time) = if self.event_count == 0 {
-				(0.0, 0.0)
-			} else {
-				(
-					self.detection_time_sum / event_count_f32,
-					self.estimation_time_sum / event_count_f32,
-				)
-			};
+			let detection_ratio = self.detection_count as f32 / n;
+			let detection_time = self.detection_time_sum as f32 / n;
+			let estimation_time = self.estimation_time_sum as f32 / n;
+			let full_pipeline_time = self.full_pipeline_sum as f32 / n;
 
 			self.event_count = 0;
 			self.detection_count = 0;
 			self.detection_time_sum = 0.0;
 			self.estimation_time_sum = 0.0;
+			self.full_pipeline_sum = 0.0;
 
-			if let Ok(Some(lock)) = self.fps_pub.try_lock().as_deref_mut() {
-				lock.publish(fps as f64).await;
-			}
 			info!(
-				"FPS: {fps:.3}; Detection %: {:.2}; Detection Time: {:.1}ms; Estimation Time: {:.1}ms",
+				"FPS: {fps:.1}; Detection %: {:.2}; Detection Time: {:.1}ms; Estimation Time: {:.1}ms; Full Pipeline: {full_pipeline_time:.1}ms",
 				detection_ratio * 100.0,
 				detection_time * 1000.0,
 				estimation_time * 1000.0,
@@ -284,6 +308,7 @@ impl OutputThread {
 pub struct VisionOutput {
 	pub module: String,
 	pub update: Option<PoseUpdate>,
+	pub timestamp: u128,
 	pub frame: Option<Arc<GrayImage>>,
 	pub detections: Vec<AprilTagDetection>,
 	pub detection_time: f32,

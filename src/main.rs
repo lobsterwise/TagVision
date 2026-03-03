@@ -56,6 +56,11 @@ async fn main() {
 			module.disabled = true;
 		}
 	}
+	for module in &cli.enable {
+		if let Some(module) = config.modules.get_mut(module) {
+			module.disabled = false;
+		}
+	}
 
 	// Commands
 	if let Some(subcommand) = cli.subcommand {
@@ -95,6 +100,9 @@ struct Cli {
 	/// Modules to disable
 	#[arg(long)]
 	disable: Vec<String>,
+	/// Modules to enable
+	#[arg(long)]
+	enable: Vec<String>,
 	/// Subcommand
 	#[command(subcommand)]
 	subcommand: Option<Command>,
