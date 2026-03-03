@@ -8,6 +8,7 @@ use crate::cv::geom::Pose3D;
 #[derive(Clone)]
 pub struct AprilTagLayout {
 	tags: HashMap<u8, Pose3D>,
+	field: LayoutField,
 }
 
 #[derive(Deserialize, Copy, Clone)]
@@ -41,7 +42,10 @@ impl AprilTagLayout {
 			tags.insert(tag.id, Pose3D::from_tag_pose(tag.pose));
 		}
 
-		Self { tags }
+		Self {
+			tags,
+			field: layout.field,
+		}
 	}
 
 	/// Loads one of the preset AprilTag layouts
@@ -81,6 +85,14 @@ impl AprilTagLayout {
 		}
 
 		Some(corners)
+	}
+
+	/// Checks whether a 2d translation is within some margin of the field borders
+	pub fn within_margin(&self, x: f64, y: f64, margin: f64) -> bool {
+		let x_within = x <= self.field.length + margin && x >= 0.0 - margin;
+		let y_within = y <= self.field.width + margin && y >= 0.0 - margin;
+
+		x_within && y_within
 	}
 }
 
@@ -184,7 +196,13 @@ mod tests {
 		let mut tags = HashMap::new();
 		tags.insert(0, tag_pose);
 
-		let layout = AprilTagLayout { tags };
+		let layout = AprilTagLayout {
+			tags,
+			field: LayoutField {
+				length: 0.0,
+				width: 0.0,
+			},
+		};
 
 		let corners = layout.get_tag_corners(0, 2.0).unwrap();
 		if !corners.relative_eq(&expected, 0.01, 0.2) {

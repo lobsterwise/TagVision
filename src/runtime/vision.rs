@@ -225,6 +225,17 @@ fn solve_tags(
 						.unwrap_or(std::cmp::Ordering::Equal)
 				});
 				if let Some(pose) = best_pose {
+					if let Some(field_margin) = filters.field_margin {
+						if !layout.within_margin(pose.pose.t[0], pose.pose.t[1], field_margin) {
+							continue;
+						}
+					}
+					if let Some(z_margin) = filters.z_margin {
+						if pose.pose.t[2].abs() > z_margin {
+							continue;
+						}
+					}
+
 					let covariance = pose_covariance(
 						&pose.pose.r,
 						&pose.pose.t,
@@ -233,6 +244,7 @@ fn solve_tags(
 						intrinsics.fy,
 						0.5,
 					);
+
 					solved_poses.push(pose);
 				}
 			}

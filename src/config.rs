@@ -101,6 +101,10 @@ pub struct TagFilters {
 	pub min_perimeter: Option<f64>,
 	/// Maximum perimeter for detections
 	pub max_perimeter: Option<f64>,
+	/// How far outside of the field the estimated poses can be before they are discarded
+	pub field_margin: Option<f64>,
+	/// How far above or below the field floor an estimated pose can be before it is discarded
+	pub z_margin: Option<f64>,
 }
 
 /// Configuration for a single camera module
