@@ -4,7 +4,7 @@ use crate::sys::readlink;
 
 /// Looks up a v4l camera ID (from /dev/v4l/by-id) to find it's index
 pub fn lookup_camera_id_linux(camera_id: &str) -> std::io::Result<u32> {
-	let path = PathBuf::from("/dev/v4l/by-id/").join(format!("{camera_id}-video-index0"));
+	let path = PathBuf::from("/dev/v4l/by-path/").join(format!("{camera_id}-video-index0"));
 	if !path.exists() {
 		return Err(std::io::Error::new(
 			std::io::ErrorKind::NotFound,

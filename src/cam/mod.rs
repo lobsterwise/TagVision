@@ -137,6 +137,7 @@ pub type FrameResult = Result<CameraFrame, CaptureError>;
 
 /// Different errors for camera creation
 #[derive(thiserror::Error, Debug, Clone)]
+#[allow(dead_code)]
 pub enum CameraSetupError {
 	/// The given backend was not compiled in the binary
 	#[allow(dead_code)]

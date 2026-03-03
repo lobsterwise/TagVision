@@ -29,10 +29,8 @@ pub struct CameraServer {
 	frame_rx: Receiver<CameraServerInput>,
 	/// Sender to streams for individual modules
 	module_senders: HashMap<String, broadcast::Sender<RgbImage>>,
-	/// List of publishers for streams
-	streams_publishers: Vec<PubSub<Vec<String>>>,
-	/// Reused allocation for the streams data
-	streams: Vec<Vec<String>>,
+	/// List of publishers for stream info
+	info_pubs: HashMap<String, CameraInfoPubs>,
 }
 
 impl CameraServer {
@@ -42,28 +40,31 @@ impl CameraServer {
 		reconnectable_client: &ReconnectableClient,
 		frame_rx: Receiver<CameraServerInput>,
 	) -> Result<Self, CameraServerError> {
-		let mut streams = Vec::new();
-		let mut streams_publishers = Vec::new();
+		let mut info_pubs = HashMap::new();
 		let mut module_senders = HashMap::new();
 		let mut module_receivers = HashMap::new();
 
 		let local_ip = local_ip()?;
 
 		for module_id in module_ids {
-			let table = format!("/CameraServer/Module {module_id}");
+			let stream_url = format!("mjpg:http://{local_ip}:{CS_PORT}/{module_id}");
 
-			let pubsub = reconnectable_client
-				.get_topic(
-					format!("{table}/streams"),
-					Duration::from_millis(200),
-					client,
-				)
-				.await?;
-			streams_publishers.push(pubsub);
+			let pubs = match CameraInfoPubs::new(
+				module_id,
+				stream_url,
+				client,
+				reconnectable_client,
+			)
+			.await
+			{
+				Ok(pubs) => pubs,
+				Err(e) => {
+					error!("Failed to initialize CS module info: {e}");
+					continue;
+				}
+			};
 
-			let stream_url = format!("mjpeg:http://{local_ip}:{CS_PORT}/{module_id}");
-			let module_streams = vec![stream_url];
-			streams.push(module_streams);
+			info_pubs.insert(module_id.clone(), pubs);
 
 			let (tx, rx) = broadcast::channel(5);
 			module_senders.insert(module_id.clone(), tx);
@@ -120,8 +121,7 @@ impl CameraServer {
 		info!("Camera server connected");
 
 		Ok(Self {
-			streams_publishers,
-			streams,
+			info_pubs,
 			module_senders,
 			frame_rx,
 		})
@@ -139,13 +139,17 @@ impl CameraServer {
 	}
 
 	async fn run(&mut self, input: CameraServerInput) {
+		let dimensions = input.frame.dimensions();
 		if let Some(sender) = self.module_senders.get(&input.module_id) {
 			let _ = sender.send(input.frame);
 		}
 
 		// Update NT listing for streams
-		for (pubsub, data) in self.streams_publishers.iter_mut().zip(self.streams.iter()) {
-			pubsub.publish(data.clone()).await;
+		for (module_id, pubs) in &mut self.info_pubs {
+			if module_id == &input.module_id {
+				pubs.set_mode(dimensions.0, dimensions.1);
+			}
+			pubs.publish().await;
 		}
 	}
 }
@@ -231,6 +235,66 @@ pub enum CameraServerError {
 pub struct CameraServerInput {
 	pub frame: RgbImage,
 	pub module_id: String,
+}
+
+/// Publishers for camera info
+struct CameraInfoPubs {
+	connected_pub: PubSub<bool>,
+	streams_pub: PubSub<Vec<String>>,
+	streams: Vec<String>,
+	/// Stream format
+	mode_pub: PubSub<String>,
+	modes_pub: PubSub<Vec<String>>,
+	mode: Option<String>,
+}
+
+impl CameraInfoPubs {
+	async fn new(
+		module_id: &str,
+		stream_url: String,
+		client: &ClientHandle,
+		reconnectable_client: &ReconnectableClient,
+	) -> Result<Self, NewPublisherError> {
+		let table = format!("/CameraPublisher/Module {module_id}");
+		let connected_pub = reconnectable_client
+			.get_topic(format!("{table}/connected"), Duration::from_secs(1), client)
+			.await?;
+		let streams_pub = reconnectable_client
+			.get_topic(format!("{table}/streams"), Duration::from_secs(1), client)
+			.await?;
+		let mode_pub = reconnectable_client
+			.get_topic(format!("{table}/mode"), Duration::from_secs(1), client)
+			.await?;
+		let modes_pub = reconnectable_client
+			.get_topic(format!("{table}/modes"), Duration::from_secs(1), client)
+			.await?;
+
+		Ok(Self {
+			connected_pub,
+			streams_pub,
+			streams: vec![stream_url],
+			mode_pub,
+			modes_pub,
+			mode: None,
+		})
+	}
+
+	/// Publishes info
+	async fn publish(&mut self) {
+		let _ = self.connected_pub.publish(true).await;
+		let _ = self.streams_pub.publish(self.streams.clone()).await;
+		if let Some(mode) = &self.mode {
+			let _ = self.mode_pub.publish(mode.clone()).await;
+			let _ = self.modes_pub.publish(vec![mode.clone()]).await;
+		}
+	}
+
+	/// Sets the camera mode when that info becomes available
+	fn set_mode(&mut self, width: u32, height: u32) {
+		if self.mode.is_none() {
+			self.mode = Some(format!("{width}x{height} MJPEG 30 fps"));
+		}
+	}
 }
 
 fn convert_to_jpeg(image: RgbImage, buf: &mut Vec<u8>) -> Result<(), CameraServerError> {

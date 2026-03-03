@@ -104,6 +104,8 @@ impl Output {
 						}
 						*output_modules.lock().await = output_modules2;
 
+						info!("Module output publishers started");
+
 						if let Ok(pubsub) = reconn_client
 							.get_topic(
 								format!("{BASE_TABLE}/FPS"),
@@ -115,9 +117,19 @@ impl Output {
 							*fps_pub.lock().await = Some(pubsub);
 						}
 
-						if let Ok(pubs) = SchemaPublishers::new(&client, &reconn_client).await {
+						info!("FPS publisher started");
+
+						if let Ok(pubs) = SchemaPublishers::new(
+							&client,
+							&reconn_client,
+							network_config.enable_wpi_schemas,
+						)
+						.await
+						{
 							*schema_pubs.lock().await = Some(pubs);
 						}
+
+						info!("Schema publishers started");
 
 						if network_config.camera_server {
 							let (cs_tx, cs_rx) = tokio::sync::mpsc::channel(5);
@@ -376,16 +388,17 @@ impl StructDataSize for TagVisionDetection {
 struct SchemaPublishers {
 	tag_vision_pose_update: PubSub<rmpv::Value>,
 	tag_vision_detection: PubSub<rmpv::Value>,
-	quaternion: PubSub<rmpv::Value>,
-	rotation3d: PubSub<rmpv::Value>,
-	translation3d: PubSub<rmpv::Value>,
-	pose3d: PubSub<rmpv::Value>,
+	quaternion: Option<PubSub<rmpv::Value>>,
+	rotation3d: Option<PubSub<rmpv::Value>>,
+	translation3d: Option<PubSub<rmpv::Value>>,
+	pose3d: Option<PubSub<rmpv::Value>>,
 }
 
 impl SchemaPublishers {
 	pub async fn new(
 		client: &ClientHandle,
 		reconnectable_client: &ReconnectableClient,
+		enable_wpi: bool,
 	) -> Result<Self, NewPublisherError> {
 		let tag_vision_pose_update = reconnectable_client
 			.get_topic(
@@ -403,37 +416,61 @@ impl SchemaPublishers {
 			)
 			.await?;
 
-		let quaternion = reconnectable_client
-			.get_topic(
-				format!("/.schema/struct:Quaternion"),
-				Duration::from_millis(100),
-				&client,
+		let quaternion = if enable_wpi {
+			Some(
+				reconnectable_client
+					.get_topic(
+						format!("/.schema/struct:Quaternion"),
+						Duration::from_millis(100),
+						&client,
+					)
+					.await?,
 			)
-			.await?;
+		} else {
+			None
+		};
 
-		let rotation3d = reconnectable_client
-			.get_topic(
-				format!("/.schema/struct:Rotation3d"),
-				Duration::from_millis(100),
-				&client,
+		let rotation3d = if enable_wpi {
+			Some(
+				reconnectable_client
+					.get_topic(
+						format!("/.schema/struct:Rotation3d"),
+						Duration::from_millis(100),
+						&client,
+					)
+					.await?,
 			)
-			.await?;
+		} else {
+			None
+		};
 
-		let translation3d = reconnectable_client
-			.get_topic(
-				format!("/.schema/struct:Translation3d"),
-				Duration::from_millis(100),
-				&client,
+		let translation3d = if enable_wpi {
+			Some(
+				reconnectable_client
+					.get_topic(
+						format!("/.schema/struct:Translation3d"),
+						Duration::from_millis(100),
+						&client,
+					)
+					.await?,
 			)
-			.await?;
+		} else {
+			None
+		};
 
-		let pose3d = reconnectable_client
-			.get_topic(
-				format!("/.schema/struct:Pose3d"),
-				Duration::from_millis(100),
-				&client,
+		let pose3d = if enable_wpi {
+			Some(
+				reconnectable_client
+					.get_topic(
+						format!("/.schema/struct:Pose3d"),
+						Duration::from_millis(100),
+						&client,
+					)
+					.await?,
 			)
-			.await?;
+		} else {
+			None
+		};
 
 		Ok(Self {
 			tag_vision_pose_update,
@@ -460,25 +497,29 @@ impl SchemaPublishers {
 			))
 			.await;
 
-		let _ = self
-			.quaternion
-			.publish(rmpv::Value::Binary(Quaternion::schema().0.into_bytes()))
-			.await;
+		if let Some(pubsub) = &mut self.quaternion {
+			let _ = pubsub
+				.publish(rmpv::Value::Binary(Quaternion::schema().0.into_bytes()))
+				.await;
+		}
 
-		let _ = self
-			.rotation3d
-			.publish(rmpv::Value::Binary(Rotation3d::schema().0.into_bytes()))
-			.await;
+		if let Some(pubsub) = &mut self.rotation3d {
+			let _ = pubsub
+				.publish(rmpv::Value::Binary(Rotation3d::schema().0.into_bytes()))
+				.await;
+		}
 
-		let _ = self
-			.translation3d
-			.publish(rmpv::Value::Binary(Translation3d::schema().0.into_bytes()))
-			.await;
+		if let Some(pubsub) = &mut self.translation3d {
+			let _ = pubsub
+				.publish(rmpv::Value::Binary(Translation3d::schema().0.into_bytes()))
+				.await;
+		}
 
-		let _ = self
-			.pose3d
-			.publish(rmpv::Value::Binary(Pose3d::schema().0.into_bytes()))
-			.await;
+		if let Some(pubsub) = &mut self.pose3d {
+			let _ = pubsub
+				.publish(rmpv::Value::Binary(Pose3d::schema().0.into_bytes()))
+				.await;
+		}
 	}
 }
 

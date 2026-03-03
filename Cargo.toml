@@ -36,7 +36,7 @@ tracing = "0.1.44"
 tracing-subscriber = "0.3.22"
 
 [features]
-default = ["gstreamer", "native"]
+default = ["native"]
 gstreamer = ["dep:gstreamer"]
 native = ["dep:nokhwa"]
 

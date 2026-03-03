@@ -61,6 +61,9 @@ pub struct NetworkConfig {
 	/// Whether to enable CameraServer output
 	#[serde(default = "default_camera_server")]
 	pub camera_server: bool,
+	/// Whether to also publish WPILib schemas. Can block other output if these schemas are already published by robot code.
+	#[serde(default)]
+	pub enable_wpi_schemas: bool,
 }
 
 fn default_reconnect_interval() -> f32 {
