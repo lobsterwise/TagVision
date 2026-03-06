@@ -2,7 +2,7 @@ use nalgebra::{Isometry3, Matrix3, Matrix3x1, OPoint, Translation3, UnitQuaterni
 
 use super::apriltag::layout::LayoutPose;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq)]
 pub struct Pose3D {
 	// Translation
 	pub t: Vector3<f64>,
@@ -57,6 +57,18 @@ impl Pose3D {
 			t: isometry.translation.vector,
 			r: isometry.rotation.to_rotation_matrix().matrix().clone(),
 		}
+	}
+
+	pub fn wpi_to_transform(&self) -> Pose3D {
+		let mut pose = self.clone();
+		pose.t = pose.r * pose.t;
+		pose
+	}
+
+	pub fn to_wpi(&self) -> Pose3D {
+		let mut pose = self.clone();
+		pose.t = pose.r.try_inverse().unwrap() * pose.t;
+		pose
 	}
 }
 

@@ -5,7 +5,10 @@ use config::Config;
 use runtime::Runtime;
 use tracing::{error, info};
 
-use crate::sys::{generate_service, get_service_path, readlink};
+use crate::{
+	cv::distort::OpenCVCameraIntrinsics,
+	sys::{generate_service, get_service_path, readlink},
+};
 
 /// Camera hardware interfaces
 mod cam;
@@ -77,6 +80,27 @@ async fn main() {
 
 				return;
 			}
+			Command::Undistort {
+				image,
+				module,
+				out_path,
+			} => {
+				let Some(module) = config.modules.get(&module) else {
+					eprintln!("Module does not exist");
+					return;
+				};
+
+				let intrinsics = OpenCVCameraIntrinsics::from_calib(&module.camera.intrinsics);
+
+				let image = image::open(image).expect("Failed to open input image");
+				let image = image.into();
+
+				let new_image = intrinsics.unproject_image(image);
+				new_image.save(out_path).expect("Failed to save image");
+				println!("Image saved");
+
+				return;
+			}
 		}
 	}
 
@@ -114,5 +138,14 @@ enum Command {
 	Setup {
 		/// Path to the config file to use. This should be a consistent path that you don't change.
 		config_path: String,
+	},
+	/// Unproject an image file with the given camera's intrinsics
+	Undistort {
+		/// Path to the image file
+		image: String,
+		/// Module ID of the camera with the intrinsics
+		module: String,
+		/// Path to the output file
+		out_path: String,
 	},
 }

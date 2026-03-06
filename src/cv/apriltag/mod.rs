@@ -374,34 +374,16 @@ impl AprilTagDetection {
 		&self,
 		intrinsics: &OpenCVCameraIntrinsics,
 	) -> Matrix2x4<f64> {
-		fn reproject_to_pixels(
-			v: Vector2<f64>,
-			intrinsics: &OpenCVCameraIntrinsics,
-		) -> Vector2<f64> {
-			Vector2::new(
-				v.x * intrinsics.fx + intrinsics.cx,
-				v.y * intrinsics.fy + intrinsics.cy,
-			)
-		}
-
-		let v1 = intrinsics
-			.unproject_one(&self.corners.column(0).clone_owned())
-			.xy();
-		let v2 = intrinsics
-			.unproject_one(&self.corners.column(1).clone_owned())
-			.xy();
-		let v3 = intrinsics
-			.unproject_one(&self.corners.column(2).clone_owned())
-			.xy();
-		let v4 = intrinsics
-			.unproject_one(&self.corners.column(3).clone_owned())
-			.xy();
+		let v1 = intrinsics.unproject_one(&self.corners.column(0).clone_owned());
+		let v2 = intrinsics.unproject_one(&self.corners.column(1).clone_owned());
+		let v3 = intrinsics.unproject_one(&self.corners.column(2).clone_owned());
+		let v4 = intrinsics.unproject_one(&self.corners.column(3).clone_owned());
 
 		Matrix2x4::from_columns(&[
-			reproject_to_pixels(v1, intrinsics),
-			reproject_to_pixels(v2, intrinsics),
-			reproject_to_pixels(v3, intrinsics),
-			reproject_to_pixels(v4, intrinsics),
+			intrinsics.to_pixel_coordinates(v1),
+			intrinsics.to_pixel_coordinates(v2),
+			intrinsics.to_pixel_coordinates(v3),
+			intrinsics.to_pixel_coordinates(v4),
 		])
 	}
 }

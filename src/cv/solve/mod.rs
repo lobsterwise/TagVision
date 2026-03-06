@@ -1,7 +1,4 @@
-use nalgebra::{
-	matrix, ArrayStorage, Const, Isometry3, Matrix, Matrix3, Matrix3x4, Matrix6, Rotation3,
-	Translation3, UnitQuaternion, Vector3,
-};
+use nalgebra::{matrix, ArrayStorage, Const, Matrix, Matrix3, Matrix3x4, Matrix6, Vector3};
 
 use crate::cv::{
 	apriltag::{layout::AprilTagLayout, AprilTagDetection},
@@ -47,7 +44,7 @@ impl PnPSolver for AprilTagHomographySolver {
 		tag_width: f64,
 	) -> Option<PnPSolution> {
 		// World origin -> tag position
-		let world_to_tag = layout.get_tag_pose(detection.id)?.to_isometry();
+		let world_to_tag = layout.get_tag_pose(detection.id)?;
 
 		// If you were the tag facing outward from the wall, +X is to the left, +Y is down, and +Z points forward
 		let Pose3DWithError {
@@ -55,15 +52,41 @@ impl PnPSolver for AprilTagHomographySolver {
 			error,
 		} = detection.solve(intrinsics, tag_width);
 
-		let mut camera_to_tag = camera_to_tag.to_isometry();
+		let mut camera_to_tag = camera_to_tag;
+		// Remap / rotate axes into correct frame
 		let axis_remap = matrix![
 			0.0, 0.0, 1.0;
-			1.0, 0.0, 0.0;
+			-1.0, 0.0, 0.0;
 			0.0, -1.0, 0.0;
 		];
-		let rot_remap = UnitQuaternion::from(Rotation3::from_matrix_unchecked(axis_remap));
-		// camera_to_tag.rotation = rot_remap.inverse() * camera_to_tag.rotation;
-		camera_to_tag.translation.vector = axis_remap * camera_to_tag.translation.vector;
+		let rot_remap = matrix![
+			-1.0, 0.0, 0.0;
+			0.0, -1.0, 0.0;
+			0.0, 0.0, 1.0;
+		];
+		// let rot_remap = UnitQuaternion::from(Rotation3::from_matrix_unchecked(axis_remap));
+		camera_to_tag.r = rot_remap * camera_to_tag.r;
+		camera_to_tag.t = axis_remap * camera_to_tag.t;
+
+		// let camera_to_tag = Pose3D {
+		// 	r: Matrix3::identity(),
+		// 	t: Vector3::new(1.0, 0.0, 0.0),
+		// };
+
+		// Compute relative to tag
+		let world_to_camera = Pose3D {
+			r: world_to_tag.r * camera_to_tag.r,
+			t: world_to_tag.t + world_to_tag.r * camera_to_tag.t,
+		};
+
+		// let world_to_camera = world_to_camera.to_wpi();
+
+		// Invert
+		// let mut tag_to_camera = camera_to_tag.clone();
+		// tag_to_camera.t *= -1.0;
+		// tag_to_camera.r.try_inverse_mut();
+		// // Make translation relative to tag
+		// tag_to_camera.t = tag_to_camera.r * tag_to_camera.t;
 
 		// let rot_y = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), 90f64.to_radians());
 		// let rot_x = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), 90f64.to_radians());
@@ -109,7 +132,7 @@ impl PnPSolver for AprilTagHomographySolver {
 		// let mut world_to_camera = world_to_tag;
 		// world_to_camera.append_translation_mut(&camera_to_tag.translation);
 		// world_to_camera.append_rotation_mut(r);
-		let world_to_camera = world_to_tag * camera_to_tag;
+		// let world_to_camera = world_to_tag * tag_to_camera;
 
 		// Step 2: convert solver tag → layout tag
 		// let tag_solver_to_layout = Isometry3::from_parts(
@@ -143,8 +166,9 @@ impl PnPSolver for AprilTagHomographySolver {
 		// let world_to_camera = tag_to_world.to_isometry() * camera_frc_to_tag_layout.inverse();
 
 		let world = Pose3DWithError {
-			pose: Pose3D::from_isometry(world_to_camera),
-			// pose: tag_to_camera,
+			// pose: Pose3D::from_isometry(world_to_camera).to_wpi(),
+			// pose: camera_to_tag,
+			pose: world_to_camera,
 			error,
 		};
 

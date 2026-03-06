@@ -1,3 +1,4 @@
+use image::{Rgb, RgbImage};
 use nalgebra::{Vector2, Vector3};
 use serde::Deserialize;
 
@@ -78,6 +79,52 @@ impl OpenCVCameraIntrinsics {
 		}
 
 		Vector3::new(x, y, 1.0)
+	}
+
+	/// Converts a ray from unproject_one into pixel coordinates
+	pub fn to_pixel_coordinates(&self, ray: Vector3<f64>) -> Vector2<f64> {
+		Vector2::new(ray.x * self.fx + self.cx, ray.y * self.fy + self.cy)
+	}
+
+	pub fn unproject_image(&self, image: RgbImage) -> RgbImage {
+		// Reproject pixels
+		let mut pixel_mappings =
+			vec![(0, 0, Rgb([0u8, 0, 0])); (image.width() * image.height()) as usize];
+
+		let mut min_coord = (0, 0);
+		let mut max_coord = (0, 0);
+		for (i, pt) in image.pixels().enumerate() {
+			let x = i as u32 % image.width();
+			let y = i as u32 / image.width();
+
+			let mat = Vector2::new(x as f64, y as f64);
+			let reproj = self.to_pixel_coordinates(self.unproject_one(&mat));
+			let new_x = reproj.x as i32;
+			let new_y = reproj.y as i32;
+
+			min_coord.0 = min_coord.0.min(new_x);
+			min_coord.1 = min_coord.1.min(new_y);
+			max_coord.0 = max_coord.0.max(new_x);
+			max_coord.1 = max_coord.1.max(new_y);
+
+			pixel_mappings[i] = (new_x, new_y, *pt);
+		}
+
+		// Figure out new dimensions
+		let new_width = (max_coord.0 - min_coord.0 + 1) as u32;
+		let new_height = (max_coord.1 - min_coord.1 + 1) as u32;
+
+		// Fill out new image
+		let mut new_image = RgbImage::new(new_width, new_height);
+		for (new_x, new_y, pixel) in pixel_mappings {
+			// The coordinates are now different since the original image is centered in the new one
+			let new_x = new_x - min_coord.0;
+			let new_y = new_y - min_coord.1;
+
+			new_image[(new_x as u32, new_y as u32)] = pixel;
+		}
+
+		new_image
 	}
 }
 
