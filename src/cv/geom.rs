@@ -1,4 +1,4 @@
-use nalgebra::{Isometry3, Matrix3, Matrix3x1, OPoint, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{Isometry3, Matrix3, Matrix3x1, Translation3, UnitQuaternion, Vector3};
 
 use super::apriltag::layout::LayoutPose;
 
@@ -58,26 +58,6 @@ impl Pose3D {
 			r: isometry.rotation.to_rotation_matrix().matrix().clone(),
 		}
 	}
-
-	pub fn wpi_to_transform(&self) -> Pose3D {
-		let mut pose = self.clone();
-		pose.t = pose.r * pose.t;
-		pose
-	}
-
-	pub fn to_wpi(&self) -> Pose3D {
-		let mut pose = self.clone();
-		pose.t = pose.r.try_inverse().unwrap() * pose.t;
-		pose
-	}
-}
-
-/// Changes an isometry of rotation + translation in rotated frame to a translation then a rotation
-pub fn reverse_isometry(iso: Isometry3<f64>) -> (Vector3<f64>, UnitQuaternion<f64>) {
-	let translation = iso.transform_point(&OPoint::origin()).coords;
-	let rotation = iso.rotation;
-
-	(translation, rotation)
 }
 
 /// A 3D pose with a reprojection error

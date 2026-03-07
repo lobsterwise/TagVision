@@ -190,7 +190,7 @@ pub struct AprilTagDetection {
 }
 
 impl AprilTagDetection {
-	/// Solves for pose using homography on this detection
+	/// Solves for pose using homography on this detection, returning transform of camera relative to tag
 	pub fn solve(&self, intrinsics: &OpenCVCameraIntrinsics, tag_width: f64) -> Pose3DWithError {
 		let mut t = [0.0; 3];
 		let mut t = _MatD {
@@ -248,8 +248,30 @@ impl AprilTagDetection {
 
 		let reproj_err = unsafe { estimate_tag_pose((&mut info) as *mut _, (&mut pose) as *mut _) };
 
+		let mut pose = unsafe { pose.to_pose3d() };
+
+		// Correct solutions behind the tag
+		if pose.t.z < 0.0 {
+			// Invert translation
+			let t_matrix = matrix![
+				-1.0, 0.0, 0.0;
+				0.0, -1.0, 0.0;
+				0.0, 0.0, -1.0;
+			];
+			// Rotate 180 degrees around z
+			let r_matrix = matrix![
+				-1.0, 0.0, 0.0;
+				0.0, -1.0, 0.0;
+				0.0, 0.0, 1.0;
+			];
+
+
+			pose.t = t_matrix * pose.t;
+			pose.r = r_matrix * pose.r;
+		}
+
 		Pose3DWithError {
-			pose: unsafe { pose.to_pose3d() },
+			pose,
 			error: reproj_err,
 		}
 	}

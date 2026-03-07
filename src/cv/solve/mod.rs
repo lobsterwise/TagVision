@@ -52,26 +52,27 @@ impl PnPSolver for AprilTagHomographySolver {
 			error,
 		} = detection.solve(intrinsics, tag_width);
 
-		let mut camera_to_tag = camera_to_tag;
 		// Remap / rotate axes into correct frame
+		let mut camera_to_tag = camera_to_tag;
 		let axis_remap = matrix![
 			0.0, 0.0, 1.0;
 			-1.0, 0.0, 0.0;
-			0.0, -1.0, 0.0;
+			0.0, 1.0, 0.0;
 		];
-		let rot_remap = matrix![
-			-1.0, 0.0, 0.0;
-			0.0, -1.0, 0.0;
-			0.0, 0.0, 1.0;
+		// Remap rotation axes, i.e. we want to change from rolling around z axis to x instead
+		let rot_axis_remap = matrix![
+		0.0,  0.0, -1.0;
+		0.0, -1.0,  0.0;
+		-1.0,  0.0,  0.0
 		];
-		// let rot_remap = UnitQuaternion::from(Rotation3::from_matrix_unchecked(axis_remap));
-		camera_to_tag.r = rot_remap * camera_to_tag.r;
+		// After remapping rotation axes, we then need to rotate to face the tag
+		let rot_rotation = matrix![
+			0.0,  0.0, 1.0;
+			0.0, 1.0,  0.0;
+			-1.0,  0.0,  0.0
+		];
+		camera_to_tag.r = rot_rotation * (camera_to_tag.r * rot_axis_remap);
 		camera_to_tag.t = axis_remap * camera_to_tag.t;
-
-		// let camera_to_tag = Pose3D {
-		// 	r: Matrix3::identity(),
-		// 	t: Vector3::new(1.0, 0.0, 0.0),
-		// };
 
 		// Compute relative to tag
 		let world_to_camera = Pose3D {
@@ -79,100 +80,12 @@ impl PnPSolver for AprilTagHomographySolver {
 			t: world_to_tag.t + world_to_tag.r * camera_to_tag.t,
 		};
 
-		// let world_to_camera = world_to_camera.to_wpi();
-
-		// Invert
-		// let mut tag_to_camera = camera_to_tag.clone();
-		// tag_to_camera.t *= -1.0;
-		// tag_to_camera.r.try_inverse_mut();
-		// // Make translation relative to tag
-		// tag_to_camera.t = tag_to_camera.r * tag_to_camera.t;
-
-		// let rot_y = UnitQuaternion::from_axis_angle(&Vector3::y_axis(), 90f64.to_radians());
-		// let rot_x = UnitQuaternion::from_axis_angle(&Vector3::x_axis(), 90f64.to_radians());
-		// let camera_to_tag = Isometry3::from_parts(
-		// 	Translation3::from(
-		// 		(rot_y * rot_x).inverse().to_rotation_matrix().matrix()
-		// 			* camera_to_tag.translation.vector,
-		// 	),
-		// 	(rot_y * rot_x).inverse() * camera_to_tag.rotation,
-		// );
-
-		// camera_to_tag.append_rotation_mut(
-		// 	&Rotation3::from_matrix_unchecked(matrix![
-		// 		0.0, 1.0, 0.0;
-		// 		0.0, 0.0, -1.0;
-		// 		1.0, 0.0, 0.0;
-		// 	])
-		// 	.into(),
-		// );
-		// // I hate transforms
-		// camera_to_tag.append_rotation_mut(
-		// 	&Rotation3::from_matrix_unchecked(matrix![
-		// 	1.0, 0.0, 0.0;
-		// 	0.0, 1.0, 0.0;
-		// 	0.0, 0.0, 1.0;
-		// 	])
-		// 	.into(),
-		// );
-		// camera_to_tag.translation.y *= -1.0;
-
-		// let r = camera_to_tag.rotation.to_rotation_matrix();
-		// let r = r.matrix();
-		// let transform = matrix![
-		// 	1.0, 0.0, 0.0;
-		// 	0.0, -1.0, 0.0;
-		// 	0.0, 0.0, 1.0;
-		// ];
-		// let r = transform * r * transform;
-		// camera_to_tag.rotation = Rotation3::from_matrix_unchecked(r).inverse().into();
-
-		// let tag_to_camera = transform * camera_to_tag;
-
-		// let mut world_to_camera = world_to_tag;
-		// world_to_camera.append_translation_mut(&camera_to_tag.translation);
-		// world_to_camera.append_rotation_mut(r);
-		// let world_to_camera = world_to_tag * tag_to_camera;
-
-		// Step 2: convert solver tag → layout tag
-		// let tag_solver_to_layout = Isometry3::from_parts(
-		// 	Translation3::identity(),
-		// 	Rotation3::from_matrix_unchecked(matrix![
-		// 		0.0, 0.0, 1.0;
-		// 		1.0, 0.0,  0.0;
-		// 		0.0, -1.0, 0.0;
-		// 	])
-		// 	.into(),
-		// );
-
-		// // Because tag is source frame, multiply on RIGHT
-		// let camera_cv_to_tag_layout =
-		// 	camera_cv_to_tag_solver.to_isometry() * tag_solver_to_layout.inverse();
-
-		// // Step 3: convert OpenCV camera → FRC camera
-		// let cam_cv_to_frc = Isometry3::from_parts(
-		// 	Translation3::identity(),
-		// 	UnitQuaternion::from_matrix(&matrix![
-		// 		0.0, 0.0, 1.0;
-		// 		-1.0, 0.0, 0.0;
-		// 		0.0, -1.0, 0.0;
-		// 	]),
-		// );
-
-		// let camera_frc_to_tag_layout =
-		// 	cam_cv_to_frc * camera_cv_to_tag_layout * cam_cv_to_frc.inverse();
-
-		// // Step 4: compose into world
-		// let world_to_camera = tag_to_world.to_isometry() * camera_frc_to_tag_layout.inverse();
-
-		let world = Pose3DWithError {
-			// pose: Pose3D::from_isometry(world_to_camera).to_wpi(),
-			// pose: camera_to_tag,
+		let world_to_camera = Pose3DWithError {
 			pose: world_to_camera,
 			error,
 		};
 
-		Some(PnPSolution::Multi(vec![world]))
+		Some(PnPSolution::Multi(vec![world_to_camera]))
 	}
 }
 
