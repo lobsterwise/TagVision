@@ -93,27 +93,31 @@ impl CameraServer {
 						.iter()
 						.map(|(k, v)| (k.clone(), v.resubscribe()))
 						.collect();
-					if let Err(err) = http1::Builder::new()
-						.serve_connection(
-							io,
-							service_fn(move |req| {
-								let rx = if let Some(module) = req.uri().path().strip_prefix('/') {
-									if let Some(rx) = module_receivers.get(module) {
-										Some(rx.resubscribe())
-									} else {
-										None
-									}
-								} else {
-									None
-								};
 
-								router(rx)
-							}),
-						)
-						.await
-					{
-						error!("CS connection error: {err}");
-					}
+					tokio::spawn(async move {
+						if let Err(err) = http1::Builder::new()
+							.serve_connection(
+								io,
+								service_fn(move |req| {
+									let rx =
+										if let Some(module) = req.uri().path().strip_prefix('/') {
+											if let Some(rx) = module_receivers.get(module) {
+												Some(rx.resubscribe())
+											} else {
+												None
+											}
+										} else {
+											None
+										};
+
+									router(rx)
+								}),
+							)
+							.await
+						{
+							error!("CS connection error: {err}");
+						}
+					});
 				}
 			});
 		}
@@ -194,7 +198,7 @@ fn mjpeg_stream(mut rx: broadcast::Receiver<RgbImage>) -> Response<BoxBody<Bytes
 			);
 
 			yield Ok::<Frame<Bytes>, Infallible>(Frame::data(Bytes::from(header)));
-			yield Ok(Frame::data(Bytes::from(jpeg_bytes.clone())));
+			yield Ok(Frame::data(Bytes::copy_from_slice(&jpeg_bytes)));
 			yield Ok(Frame::data(Bytes::from("\r\n")));
 		}
 	};
