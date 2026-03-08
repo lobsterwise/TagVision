@@ -29,6 +29,9 @@ pub struct Config {
 	/// Pose estimator
 	#[serde(default)]
 	pub pose_estimator: PoseEstimatorOption,
+	/// Photo logging
+	#[serde(default)]
+	pub photo_logging: PhotoLoggingConfig,
 }
 
 /// Different backend implementations for pose estimation
@@ -216,4 +219,40 @@ fn default_vision_threads() -> u8 {
 
 fn default_camera_reconnect_interval() -> f32 {
 	1.0
+}
+
+/// Configuration for photo logging
+#[derive(Deserialize, Clone)]
+pub struct PhotoLoggingConfig {
+	/// How often to log in seconds. If zero, disables logging
+	#[serde(default = "default_photo_logging_interval")]
+	pub interval: f32,
+	/// Max number of log photos to save
+	#[serde(default = "default_photo_logging_count")]
+	pub max_count: u16,
+	/// Where to save logs
+	#[serde(default = "default_photo_logging_path")]
+	pub path: String,
+}
+
+impl Default for PhotoLoggingConfig {
+	fn default() -> Self {
+		PhotoLoggingConfig {
+			interval: default_photo_logging_interval(),
+			max_count: default_photo_logging_count(),
+			path: default_photo_logging_path(),
+		}
+	}
+}
+
+fn default_photo_logging_interval() -> f32 {
+	0.0
+}
+
+fn default_photo_logging_count() -> u16 {
+	30
+}
+
+fn default_photo_logging_path() -> String {
+	"/etc/logs".into()
 }

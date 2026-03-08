@@ -200,6 +200,8 @@ fn mjpeg_stream(mut rx: broadcast::Receiver<RgbImage>) -> Response<BoxBody<Bytes
 			yield Ok::<Frame<Bytes>, Infallible>(Frame::data(Bytes::from(header)));
 			yield Ok(Frame::data(Bytes::copy_from_slice(&jpeg_bytes)));
 			yield Ok(Frame::data(Bytes::from("\r\n")));
+
+			jpeg_bytes.clear();
 		}
 	};
 

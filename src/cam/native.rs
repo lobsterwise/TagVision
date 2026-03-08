@@ -7,8 +7,8 @@ use std::{
 use nokhwa::{
 	pixel_format::LumaFormat,
 	utils::{
-		ApiBackend, CameraFormat, CameraIndex, ControlValueSetter, FrameFormat, KnownCameraControl,
-		RequestedFormat, RequestedFormatType, Resolution,
+		ApiBackend, CameraFormat, CameraIndex, FrameFormat, RequestedFormat, RequestedFormatType,
+		Resolution,
 	},
 	Camera, NokhwaError,
 };
@@ -16,7 +16,7 @@ use tokio::sync::{mpsc, oneshot};
 use tracing::{error, info};
 
 use crate::{
-	cam::FrameResult,
+	cam::{v4l::apply_v4l_conf, FrameResult},
 	config::{CameraConfig, FrameFormatOption, RuntimeConfig},
 };
 
@@ -63,6 +63,12 @@ impl CameraBackend for NativeCamera {
 		{
 			let config = config.clone();
 			std::thread::spawn(move || {
+				// We have to configure before starting the camera or else we get permission errors
+				if let Ok(index) = index.as_index() {
+					if let Err(e) = apply_v4l_conf(index as u8, &config) {
+						error!("Failed to configure camera: {e}");
+					}
+				}
 				let camera = Camera::with_backend(index.clone(), format, backend);
 				let mut camera = match camera {
 					Ok(camera) => camera,
@@ -80,41 +86,6 @@ impl CameraBackend for NativeCamera {
 						return;
 					}
 				};
-
-				// Configuration
-				if let Some(exposure) = config.exposure {
-					if let Err(e) = configure_camera(
-						&mut camera,
-						KnownCameraControl::Exposure,
-						ControlValueSetter::Integer(exposure as i64),
-					) {
-						error!("Failed to configure camera exposure: {e}");
-					}
-				}
-
-				if !config.manual_brightness {
-					if let Some(brightness) = config.brightness {
-						if let Err(e) = configure_camera(
-							&mut camera,
-							KnownCameraControl::Brightness,
-							ControlValueSetter::Float(brightness as f64),
-						) {
-							error!("Failed to configure camera brightness: {e}");
-						}
-					}
-				}
-
-				if !config.manual_contrast {
-					if let Some(contrast) = config.contrast {
-						if let Err(e) = configure_camera(
-							&mut camera,
-							KnownCameraControl::Brightness,
-							ControlValueSetter::Float(contrast as f64),
-						) {
-							error!("Failed to configure camera contrast: {e}");
-						}
-					}
-				}
 
 				if let Err(e) = camera.open_stream() {
 					let _ = error_tx.send(CameraSetupError::GeneralError(e.to_string()));
@@ -192,28 +163,8 @@ fn get_camera_index(camera_id: String) -> std::io::Result<CameraIndex> {
 		Ok(CameraIndex::Index(index))
 	} else {
 		#[cfg(target_os = "linux")]
-		return super::lookup::lookup_camera_id_linux(&camera_id).map(CameraIndex::Index);
+		return super::v4l::lookup_camera_id_linux(&camera_id).map(CameraIndex::Index);
 		#[cfg(not(target_os = "linux"))]
 		return Ok(CameraIndex::String(camera_id.clone()));
-	}
-}
-
-fn configure_camera(
-	camera: &mut Camera,
-	id: KnownCameraControl,
-	value: ControlValueSetter,
-) -> Result<(), CameraSetupError> {
-	match camera.set_camera_control(id, value) {
-		Ok(..) => Ok(()),
-		Err(e) => match e {
-			NokhwaError::SetPropertyError {
-				property,
-				value: _,
-				error,
-			} => Err(CameraSetupError::ConfigError(format!(
-				"Failed to configure {property}: {error}"
-			))),
-			other => Err(CameraSetupError::GeneralError(other.to_string())),
-		},
 	}
 }

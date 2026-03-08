@@ -12,7 +12,10 @@ use crate::{
 	config::{CameraConfig, RuntimeConfig},
 };
 
-use super::{CameraBackend, CameraSetupError, CaptureError};
+use super::{
+	v4l::{apply_v4l_conf, lookup_camera_id_linux},
+	CameraBackend, CameraSetupError, CaptureError,
+};
 
 pub struct GStreamerCamera {
 	bus: Bus,
@@ -66,24 +69,9 @@ impl CameraBackend for GStreamerCamera {
 		};
 
 		// Configure the camera
-		if let Some(exposure) = config.exposure {
-			v4l2_conf(&config.device_id, "exposure_auto", "1")?;
-			v4l2_conf(
-				&config.device_id,
-				"exposure_absolute",
-				&exposure.to_string(),
-			)?;
-		}
-		if !config.manual_brightness {
-			if let Some(brightness) = config.brightness {
-				v4l2_conf(&config.device_id, "brightness", &brightness.to_string())?;
-			}
-		}
-		if !config.manual_contrast {
-			if let Some(contrast) = config.contrast {
-				v4l2_conf(&config.device_id, "contrast", &contrast.to_string())?;
-			}
-		}
+		let cam_index = lookup_camera_id_linux(&config.device_id)
+			.map_err(|e| CameraSetupError::General(e.to_string()))?;
+		apply_v4l_conf(cam_index, config)?;
 
 		// Start the pipeline
 		if let Err(e) = pipeline.set_state(gstreamer::State::Playing) {
@@ -136,22 +124,4 @@ fn create_pipeline(config: &CameraConfig) -> String {
 	out += " ! video/x-raw,format=I420 ! appsink max-buffers=1 drop=1";
 
 	out
-}
-
-/// Configures a camera property using v4l2-ctl
-fn v4l2_conf(cam_id: &str, property: &str, value: &str) -> Result<(), CameraSetupError> {
-	let mut cmd = Command::new("v4l2-ctl");
-	cmd.arg("-d");
-	cmd.arg(cam_id.to_string());
-	cmd.arg("-c");
-	cmd.arg(format!("{property}={value}"));
-
-	let mut child = cmd
-		.spawn()
-		.map_err(|e| CameraSetupError::ConfigError(e.to_string()))?;
-	if let Err(e) = child.try_wait() {
-		return Err(CameraSetupError::ConfigError(e.to_string()));
-	}
-
-	Ok(())
 }

@@ -1,5 +1,7 @@
 /// CameraServer protocol
 mod cs;
+/// Frame logging
+mod photo_log;
 /// Utilities for interfacing with our nt4 crate
 pub mod utils;
 
@@ -27,7 +29,7 @@ use tokio::sync::{
 use tracing::{error, info};
 
 use crate::{
-	config::NetworkConfig,
+	config::{NetworkConfig, PhotoLoggingConfig},
 	cv::{
 		apriltag::{layout::AprilTagLayout, AprilTagDetection},
 		geom::{Pose3D, PoseUpdate},
@@ -35,6 +37,7 @@ use crate::{
 	},
 	output::{
 		cs::{CameraServer, CameraServerInput},
+		photo_log::PhotoLogger,
 		utils::{PubSub, ReconnectableClient, StructArray, StructDataSize},
 	},
 	util::{MovingAverage, Timer},
@@ -51,6 +54,7 @@ impl Output {
 		network_config: NetworkConfig,
 		modules: &HashSet<String>,
 		layout: AprilTagLayout,
+		photo_logging_config: PhotoLoggingConfig,
 	) -> Self {
 		let addr = if let Some(address) = &network_config.address {
 			nt_client::NTAddr::Custom(Ipv4Addr::from_str(address).unwrap())
@@ -166,6 +170,7 @@ impl Output {
 			fps_pub,
 			schema_pubs,
 			camera_server,
+			photo_logger: PhotoLogger::new(photo_logging_config),
 			detection_time_sum: 0.0,
 			estimation_time_sum: 0.0,
 			full_pipeline_sum: 0.0,
@@ -188,6 +193,7 @@ struct OutputThread {
 	fps_pub: Arc<Mutex<Option<PubSub<f64>>>>,
 	schema_pubs: Arc<Mutex<Option<SchemaPublishers>>>,
 	camera_server: Arc<Mutex<Option<Sender<CameraServerInput>>>>,
+	photo_logger: PhotoLogger,
 	// Stats
 	stats_timer: Timer,
 	last_frame_time: Option<Instant>,
@@ -222,6 +228,8 @@ impl OutputThread {
 						frame: rgb_image.clone(),
 					});
 				}
+
+				let _ = self.photo_logger.log(&output.module, rgb_image);
 			}
 
 			if let Some(update) = output.update {

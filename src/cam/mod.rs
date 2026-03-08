@@ -11,12 +11,12 @@ pub mod fake;
 /// GStreamer camera capture
 #[cfg(feature = "gstreamer")]
 pub mod gstreamer;
-/// Camera lookup
-#[cfg(target_os = "linux")]
-mod lookup;
 /// Native camera capture using nokhwa
 #[cfg(feature = "native")]
 pub mod native;
+/// Camera lookup
+#[cfg(target_os = "linux")]
+mod v4l;
 
 /// A camera that implements a backend
 pub struct Camera {
