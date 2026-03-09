@@ -250,7 +250,7 @@ impl OutputThread {
 			let now = SystemTime::now()
 				.duration_since(UNIX_EPOCH)
 				.unwrap_or_default()
-				.as_millis();
+				.as_secs_f64();
 			let diff = now - output.timestamp;
 			self.full_pipeline_sum += diff as f32;
 		}
@@ -316,7 +316,7 @@ impl OutputThread {
 pub struct VisionOutput {
 	pub module: String,
 	pub update: Option<PoseUpdate>,
-	pub timestamp: u128,
+	pub timestamp: f64,
 	pub frame: Option<Arc<GrayImage>>,
 	pub detections: Vec<AprilTagDetection>,
 	pub detection_time: f32,
@@ -384,12 +384,12 @@ impl OutputModule {
 
 /// A PoseUpdate that is sent over NT
 #[derive(Clone, Debug, StructData)]
-#[structdata(schema = "Pose3d pose; double error; int64 timestamp;")]
+#[structdata(schema = "Pose3d pose; double error; double timestamp;")]
 struct TagVisionPoseUpdate {
 	#[structdata(nested)]
 	pose: Pose3d,
 	error: f64,
-	timestamp: i64,
+	timestamp: f64,
 }
 
 impl TagVisionPoseUpdate {
@@ -397,7 +397,7 @@ impl TagVisionPoseUpdate {
 		Self {
 			pose: create_sendable_pose(&update.pose.pose),
 			error: update.pose.error,
-			timestamp: update.timestamp as i64,
+			timestamp: update.timestamp,
 		}
 	}
 }

@@ -38,7 +38,7 @@ impl CameraBackend for FakeCamera {
 					let timestamp = SystemTime::now()
 						.duration_since(UNIX_EPOCH)
 						.unwrap_or_default()
-						.as_millis();
+						.as_secs_f64();
 
 					let _ = frame_tx.try_send(Ok(CameraFrame {
 						timestamp,

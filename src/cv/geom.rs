@@ -77,5 +77,5 @@ pub enum PnPSolution {
 #[derive(Clone, Debug)]
 pub struct PoseUpdate {
 	pub pose: Pose3DWithError,
-	pub timestamp: u128,
+	pub timestamp: f64,
 }

@@ -92,8 +92,8 @@ pub trait CameraBackend {
 /// A single timestamped camera frame
 #[derive(Clone)]
 pub struct CameraFrame {
-	/// Timestamp for the frame in milliseconds
-	pub timestamp: u128,
+	/// Timestamp for the frame in seconds
+	pub timestamp: f64,
 	pub image: Arc<GrayImage>,
 }
 

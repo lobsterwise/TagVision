@@ -111,7 +111,7 @@ impl CameraBackend for NativeCamera {
 						let timestamp = SystemTime::now()
 							.duration_since(UNIX_EPOCH)
 							.unwrap_or_default()
-							.as_millis();
+							.as_secs_f64();
 
 						let frame = match frame_format {
 							FrameFormat::MJPEG => turbojpeg::decompress_image(frame.buffer())
