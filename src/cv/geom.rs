@@ -58,6 +58,13 @@ impl Pose3D {
 			r: isometry.rotation.to_rotation_matrix().matrix().clone(),
 		}
 	}
+
+	pub fn inverse(&self) -> Self {
+		Self {
+			t: -1.0 * self.t,
+			r: self.r.transpose(),
+		}
+	}
 }
 
 /// A 3D pose with a reprojection error

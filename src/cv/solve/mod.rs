@@ -53,31 +53,26 @@ impl PnPSolver for AprilTagHomographySolver {
 		} = detection.solve(intrinsics, tag_width);
 
 		// Remap / rotate axes into correct frame
-		let mut camera_to_tag = camera_to_tag;
+		let mut tag_to_camera = camera_to_tag.inverse();
 		let axis_remap = matrix![
-			0.0, 0.0, 1.0;
+			0.0, 0.0, -1.0;
+			1.0, 0.0, 0.0;
+			0.0, -1.0, 0.0
+		];
+		// Rotate to face the tag instead of away from it
+		let face_tag = matrix![
 			-1.0, 0.0, 0.0;
-			0.0, 1.0, 0.0;
+			0.0, -1.0, 0.0;
+			0.0, 0.0, 1.0
 		];
-		// Remap rotation axes, i.e. we want to change from rolling around z axis to x instead
-		let rot_axis_remap = matrix![
-		0.0,  0.0, -1.0;
-		0.0, -1.0,  0.0;
-		-1.0,  0.0,  0.0
-		];
-		// After remapping rotation axes, we then need to rotate to face the tag
-		let rot_rotation = matrix![
-			0.0,  0.0, 1.0;
-			0.0, 1.0,  0.0;
-			-1.0,  0.0,  0.0
-		];
-		camera_to_tag.r = rot_rotation * (camera_to_tag.r * rot_axis_remap);
-		camera_to_tag.t = axis_remap * camera_to_tag.t;
+		tag_to_camera.r = axis_remap * tag_to_camera.r * axis_remap.transpose();
+		tag_to_camera.r = tag_to_camera.r * face_tag;
+		tag_to_camera.t = axis_remap * tag_to_camera.t;
 
 		// Compute relative to tag
 		let world_to_camera = Pose3D {
-			r: world_to_tag.r * camera_to_tag.r,
-			t: world_to_tag.t + world_to_tag.r * camera_to_tag.t,
+			r: world_to_tag.r * tag_to_camera.r,
+			t: world_to_tag.t + world_to_tag.r * tag_to_camera.t,
 		};
 
 		let world_to_camera = Pose3DWithError {
