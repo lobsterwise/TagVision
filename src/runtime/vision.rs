@@ -7,7 +7,7 @@ use tokio::sync::{
 
 use crate::{
 	cam::CameraFrame,
-	config::{PoseEstimatorOption, RuntimeConfig, TagConfig, TagFilters},
+	config::{PoseEstimatorOption, RuntimeConfig, TagFilters},
 	cv::{
 		apriltag::{
 			layout::AprilTagLayout, params::AprilTagDetectorParams, AprilTagDetections,
@@ -33,7 +33,6 @@ impl VisionRuntime {
 	pub fn new(
 		runtime_config: &RuntimeConfig,
 		params: &AprilTagDetectorParams,
-		tag_config: &TagConfig,
 		layout: &AprilTagLayout,
 		filters: &TagFilters,
 		estimator: &PoseEstimatorOption,
@@ -54,7 +53,6 @@ impl VisionRuntime {
 				last_pose.clone(),
 				params.clone(),
 				layout.clone(),
-				tag_config.tag_size_meters(),
 				filters.clone(),
 			);
 
@@ -95,7 +93,6 @@ pub struct VisionThread {
 	last_pose: Arc<Mutex<Option<Pose3DWithError>>>,
 	params: AprilTagDetectorParams,
 	layout: AprilTagLayout,
-	tag_size: f64,
 	filters: TagFilters,
 }
 
@@ -107,7 +104,6 @@ impl VisionThread {
 		last_pose: Arc<Mutex<Option<Pose3DWithError>>>,
 		params: AprilTagDetectorParams,
 		layout: AprilTagLayout,
-		tag_size: f64,
 		filters: TagFilters,
 	) -> Self {
 		let estimator: Box<dyn PnPSolver + Send> = match estimator {
@@ -123,7 +119,6 @@ impl VisionThread {
 			last_pose,
 			params,
 			layout,
-			tag_size,
 			filters,
 		}
 	}
@@ -156,7 +151,6 @@ impl VisionThread {
 				&detections,
 				&input.intrinsics,
 				&self.layout,
-				self.tag_size,
 				&self.filters,
 				last_pose,
 			);
@@ -194,7 +188,6 @@ fn solve_tags(
 	detections: &AprilTagDetections,
 	intrinsics: &OpenCVCameraIntrinsics,
 	layout: &AprilTagLayout,
-	tag_size: f64,
 	filters: &TagFilters,
 	last_pose: Option<Pose3DWithError>,
 ) -> Option<Pose3DWithError> {
@@ -208,12 +201,12 @@ fn solve_tags(
 			continue;
 		}
 
-		let tag_corners_3d = layout.get_tag_corners(detection.id, tag_size);
+		let tag_corners_3d = layout.get_tag_corners(detection.id);
 		let Some(tag_corners_3d) = tag_corners_3d else {
 			continue;
 		};
 
-		let solution = solver.solve(layout, &detection, intrinsics, tag_size);
+		let solution = solver.solve(layout, &detection, intrinsics);
 		let Some(solution) = solution else {
 			continue;
 		};

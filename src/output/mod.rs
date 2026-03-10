@@ -14,7 +14,7 @@ use std::{
 };
 
 use image::GrayImage;
-use nalgebra::{Isometry3, UnitQuaternion};
+use nalgebra::{Isometry3, Matrix3x4, UnitQuaternion};
 use nt_client::{
 	math::{Pose3d, Quaternion, Rotation3d, Translation3d},
 	publish::NewPublisherError,
@@ -371,9 +371,35 @@ impl OutputModule {
 				);
 				let pose = create_sendable_pose(&pose);
 
+				let corners = layout.get_tag_corners(x.id).unwrap_or(Matrix3x4::zeros());
+				let c1 = Translation3d {
+					x: corners.m11,
+					y: corners.m21,
+					z: corners.m31,
+				};
+				let c2 = Translation3d {
+					x: corners.m12,
+					y: corners.m22,
+					z: corners.m32,
+				};
+				let c3 = Translation3d {
+					x: corners.m13,
+					y: corners.m23,
+					z: corners.m33,
+				};
+				let c4 = Translation3d {
+					x: corners.m14,
+					y: corners.m24,
+					z: corners.m34,
+				};
+
 				TagVisionDetection {
 					id: x.id as i32,
 					pose,
+					c1,
+					c2,
+					c3,
+					c4,
 				}
 			})
 			.collect();
@@ -404,16 +430,24 @@ impl TagVisionPoseUpdate {
 
 /// A tag detection that is sent over NT
 #[derive(Clone, Debug, StructData)]
-#[structdata(schema = "Pose3d pose; int32 id;")]
+#[structdata(schema = "Pose3d pose; int32 id; Translation3d c1; Translation3d c2; Translation3d c3; Translation3d c4;")]
 struct TagVisionDetection {
 	#[structdata(nested)]
 	pose: Pose3d,
 	id: i32,
+	#[structdata(nested)]
+	c1: Translation3d,
+	#[structdata(nested)]
+	c2: Translation3d,
+	#[structdata(nested)]
+	c3: Translation3d,
+	#[structdata(nested)]
+	c4: Translation3d,
 }
 
 impl StructDataSize for TagVisionDetection {
 	fn size() -> usize {
-		60
+		156
 	}
 }
 

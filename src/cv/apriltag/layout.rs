@@ -9,6 +9,7 @@ use crate::cv::geom::Pose3D;
 pub struct AprilTagLayout {
 	tags: HashMap<u8, Pose3D>,
 	field: LayoutField,
+	tag_size: f64,
 }
 
 #[derive(Deserialize, Copy, Clone)]
@@ -36,7 +37,7 @@ impl AprilTagLayoutPreset {
 
 impl AprilTagLayout {
 	/// Loads the given WPILib AprilTag layout
-	pub fn load(layout: AprilTagLayoutDeser) -> Self {
+	pub fn load(layout: AprilTagLayoutDeser, tag_size: f64) -> Self {
 		let mut tags = HashMap::with_capacity(layout.tags.len());
 		for tag in layout.tags {
 			tags.insert(tag.id, Pose3D::from_tag_pose(tag.pose));
@@ -45,17 +46,23 @@ impl AprilTagLayout {
 		Self {
 			tags,
 			field: layout.field,
+			tag_size,
 		}
 	}
 
 	/// Loads one of the preset AprilTag layouts
-	pub fn load_from_preset(layout: AprilTagLayoutPreset) -> Self {
+	pub fn load_from_preset(layout: AprilTagLayoutPreset, tag_size: f64) -> Self {
 		let data = layout.get_layout();
 
 		let deser: AprilTagLayoutDeser =
 			serde_json::from_str(data).expect("Preset layout is invalid");
 
-		Self::load(deser)
+		Self::load(deser, tag_size)
+	}
+
+	/// Gets the tag width in meters
+	pub fn tag_size(&self) -> f64 {
+		self.tag_size
 	}
 
 	/// Gets the 3D pose of a tag
@@ -64,17 +71,10 @@ impl AprilTagLayout {
 	}
 
 	/// Gets the 3D corners of a tag
-	pub fn get_tag_corners(&self, tag: u8, tag_size: f64) -> Option<Matrix3x4<f64>> {
+	pub fn get_tag_corners(&self, tag: u8) -> Option<Matrix3x4<f64>> {
 		let center = self.get_tag_pose(tag)?;
 
-		let half_tag_size = tag_size / 2.0;
-
-		// Corners in the tag's coordinate system, with the tag at the origin
-		let c1 = Vector3::new(0.0, half_tag_size, half_tag_size);
-		let c2 = Vector3::new(0.0, -half_tag_size, half_tag_size);
-		let c3 = Vector3::new(0.0, -half_tag_size, -half_tag_size);
-		let c4 = Vector3::new(0.0, half_tag_size, -half_tag_size);
-		let corners = Matrix3x4::from_columns(&[c1, c2, c3, c4]);
+		let corners = self.get_local_tag_corners();
 
 		// Rotate to match the tag's plane
 		let mut corners = center.r * corners;
@@ -85,6 +85,30 @@ impl AprilTagLayout {
 		}
 
 		Some(corners)
+	}
+
+	// Gets local tag corners on the YZ plane
+	pub fn get_local_tag_corners(&self) -> Matrix3x4<f64> {
+		let half_tag_size = self.tag_size / 2.0;
+
+		// Corners in the tag's coordinate system, with the tag at the origin
+		let c1 = Vector3::new(0.0, -half_tag_size, -half_tag_size);
+		let c2 = Vector3::new(0.0, half_tag_size, -half_tag_size);
+		let c3 = Vector3::new(0.0, half_tag_size, half_tag_size);
+		let c4 = Vector3::new(0.0, -half_tag_size, half_tag_size);
+		Matrix3x4::from_columns(&[c1, c2, c3, c4])
+	}
+
+	// Gets local tag corners on the XY plane
+	pub fn get_local_tag_corners_xy(&self) -> Matrix3x4<f64> {
+		let half_tag_size = self.tag_size / 2.0;
+
+		// Corners in the tag's coordinate system, with the tag at the origin
+		let c1 = Vector3::new(-half_tag_size, -half_tag_size, 0.0);
+		let c2 = Vector3::new(half_tag_size, -half_tag_size, 0.0);
+		let c3 = Vector3::new(half_tag_size, half_tag_size, 0.0);
+		let c4 = Vector3::new(-half_tag_size, half_tag_size, 0.0);
+		Matrix3x4::from_columns(&[c1, c2, c3, c4])
 	}
 
 	/// Checks whether a 2d translation is within some margin of the field borders
@@ -202,9 +226,10 @@ mod tests {
 				length: 0.0,
 				width: 0.0,
 			},
+			tag_size: 2.0,
 		};
 
-		let corners = layout.get_tag_corners(0, 2.0).unwrap();
+		let corners = layout.get_tag_corners(0).unwrap();
 		if !corners.relative_eq(&expected, 0.01, 0.2) {
 			dbg!(corners, expected);
 			panic!("Did not match");

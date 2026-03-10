@@ -22,9 +22,8 @@ impl PnPSolver for P3P {
 		layout: &AprilTagLayout,
 		detection: &AprilTagDetection,
 		intrinsics: &OpenCVCameraIntrinsics,
-		tag_width: f64,
 	) -> Option<PnPSolution> {
-		let object_points = layout.get_tag_corners(detection.id, tag_width)?;
+		let object_points = layout.get_tag_corners(detection.id)?;
 		let rays = detection.get_undistorted_corners_rays(intrinsics);
 
 		let rx0 = rays[(0, 0)];

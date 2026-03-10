@@ -7,7 +7,7 @@ use imageproc::pixelops::interpolate;
 use std::{fmt::Debug, sync::Arc};
 
 use image::{GrayImage, Rgb, RgbImage};
-use nalgebra::{matrix, Matrix2x4, Matrix3, Matrix3x4, Matrix4x2, Vector2, Vector3};
+use nalgebra::{matrix, Matrix2x4, Matrix3, Matrix3x4, Matrix4x2, Vector2};
 use params::AprilTagDetectorParams;
 
 use crate::{config::TagFilters, cv::geom::Pose3DWithError};

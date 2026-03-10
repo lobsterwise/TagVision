@@ -40,14 +40,14 @@ impl Runtime {
 		let (module_tx, module_rx) = mpsc::channel(config.runtime.camera_queue_size as usize);
 		let (module_err_tx, module_err_rx) = mpsc::channel(300);
 
-		let layout = AprilTagLayout::load_from_preset(config.tags.layout);
+		let layout =
+			AprilTagLayout::load_from_preset(config.tags.layout, config.tags.tag_size_meters());
 
 		// Set up all the channels
 
 		let (vision_runtime, output_receiver) = VisionRuntime::new(
 			&config.runtime,
 			&config.detector_params,
-			&config.tags,
 			&layout,
 			&config.filters,
 			&config.pose_estimator,

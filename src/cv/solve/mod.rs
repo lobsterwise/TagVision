@@ -22,7 +22,6 @@ pub trait PnPSolver {
 		layout: &AprilTagLayout,
 		detection: &AprilTagDetection,
 		intrinsics: &OpenCVCameraIntrinsics,
-		tag_width: f64,
 	) -> Option<PnPSolution>;
 }
 
@@ -42,7 +41,6 @@ impl PnPSolver for AprilTagHomographySolver {
 		layout: &AprilTagLayout,
 		detection: &AprilTagDetection,
 		intrinsics: &OpenCVCameraIntrinsics,
-		tag_width: f64,
 	) -> Option<PnPSolution> {
 		// World origin -> tag position
 		let world_to_tag = layout.get_tag_pose(detection.id)?;
@@ -51,7 +49,7 @@ impl PnPSolver for AprilTagHomographySolver {
 		let Pose3DWithError {
 			pose: camera_to_tag,
 			error,
-		} = detection.solve(intrinsics, tag_width);
+		} = detection.solve(intrinsics, layout.tag_size());
 
 		// Remap / rotate axes into correct frame
 		let mut tag_to_camera = camera_to_tag.inverse();

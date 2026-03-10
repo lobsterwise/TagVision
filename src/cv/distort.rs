@@ -1,5 +1,5 @@
 use image::{Rgb, RgbImage};
-use nalgebra::{Vector2, Vector3};
+use nalgebra::{Matrix3, Vector2, Vector3, Vector5};
 use serde::Deserialize;
 
 /// Camera intrinsics
@@ -35,6 +35,13 @@ impl OpenCVCameraIntrinsics {
 			p2: calib.distortion[3],
 			k3: calib.distortion[4],
 		}
+	}
+
+	pub fn to_matrices(&self) -> (Matrix3<f64>, Vector5<f64>) {
+		(
+			Matrix3::new(self.fx, 0.0, self.cx, 0.0, self.fy, self.cy, 0.0, 0.0, 1.0),
+			Vector5::new(self.k1, self.k2, self.p1, self.p2, self.k3),
+		)
 	}
 
 	/// New impl with fixed-point iteration

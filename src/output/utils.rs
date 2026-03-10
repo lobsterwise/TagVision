@@ -216,6 +216,7 @@ impl<T: NetworkTableData> PubSub<T> {
 }
 
 /// Struct array type publishable to NT
+#[derive(Clone, Debug)]
 pub struct StructArray<T>(pub Vec<T>);
 
 impl<T: StructData + StructDataSize> NetworkTableData for StructArray<T> {
