@@ -7,7 +7,7 @@ use imageproc::pixelops::interpolate;
 use std::{fmt::Debug, sync::Arc};
 
 use image::{GrayImage, Rgb, RgbImage};
-use nalgebra::{matrix, Matrix2x4, Matrix3, Matrix3x4, Matrix4x2, Vector2};
+use nalgebra::{matrix, Matrix2x4, Matrix3, Matrix3x4, Matrix4x2, Vector2, Vector3};
 use params::AprilTagDetectorParams;
 
 use crate::{config::TagFilters, cv::geom::Pose3DWithError};
@@ -192,22 +192,41 @@ pub struct AprilTagDetection {
 impl AprilTagDetection {
 	/// Solves for pose using homography on this detection, returning transform of camera relative to tag
 	pub fn solve(&self, intrinsics: &OpenCVCameraIntrinsics, tag_width: f64) -> Pose3DWithError {
-		let mut t = [0.0; 3];
-		let mut t = _MatD {
+		let mut t1 = [0.0; 3];
+		let mut t1 = _MatD {
 			nrows: 3,
 			ncols: 1,
-			data: (&mut t) as *mut _,
+			data: t1.as_mut_ptr(),
 		};
-		let mut r = [0.0; 3 * 3];
-		let mut r = _MatD {
+		let mut r1 = [0.0; 3 * 3];
+		let mut r1 = _MatD {
 			nrows: 3,
 			ncols: 3,
-			data: (&mut r) as *mut _,
+			data: r1.as_mut_ptr(),
 		};
-		let mut pose = _AprilTagPose {
-			t: (&mut t) as *mut _,
-			r: (&mut r) as *mut _,
+		let mut pose1 = _AprilTagPose {
+			t: (&mut t1) as *mut _,
+			r: (&mut r1) as *mut _,
 		};
+		let mut t2 = [0.0; 3];
+		let mut t2 = _MatD {
+			nrows: 3,
+			ncols: 1,
+			data: t2.as_mut_ptr(),
+		};
+		let mut r2 = [0.0; 3 * 3];
+		let mut r2 = _MatD {
+			nrows: 3,
+			ncols: 3,
+			data: r2.as_mut_ptr(),
+		};
+		let mut pose2 = _AprilTagPose {
+			t: (&mut t2) as *mut _,
+			r: (&mut r2) as *mut _,
+		};
+
+		let mut err1 = 0.0;
+		let mut err2 = 0.0;
 
 		let mut h = _MatD {
 			nrows: 3,
@@ -216,14 +235,11 @@ impl AprilTagDetection {
 			data: (self.homography.as_slice().as_ptr()) as *mut _,
 		};
 
-		// Get undistorted corners
-		let undistorted = self.get_undistorted_corners_pixels(intrinsics);
-
 		let corners = [
-			[undistorted.m11, undistorted.m21],
-			[undistorted.m12, undistorted.m22],
-			[undistorted.m13, undistorted.m23],
-			[undistorted.m14, undistorted.m24],
+			[self.corners.m11, self.corners.m21],
+			[self.corners.m12, self.corners.m22],
+			[self.corners.m13, self.corners.m23],
+			[self.corners.m14, self.corners.m24],
 		];
 
 		let det = _AprilTagDetection {
@@ -246,18 +262,45 @@ impl AprilTagDetection {
 			cy: intrinsics.cy,
 		};
 
-		let reproj_err = unsafe { estimate_tag_pose((&mut info) as *mut _, (&mut pose) as *mut _) };
+		unsafe {
+			estimate_tag_pose_orthogonal_iteration(
+				(&mut info) as *mut _,
+				(&mut err1) as *mut _,
+				(&mut pose1) as *mut _,
+				(&mut err2) as *mut _,
+				(&mut pose2) as *mut _,
+				50,
+			)
+		};
 
-		let mut pose = unsafe { pose.to_pose3d() };
+		let pose1 = unsafe { pose1.to_pose3d() };
+		let pose2 = unsafe { pose2.to_pose3d_optional() };
 
-		// Correct solutions behind the tag
+		// Pick whichever pose is in front of the tag
+
+		// dbg!(&pose1.t.z);
+		// if let Some(p2) = &pose2 {
+		// 	dbg!(&p2.t.z);
+		// }
+		let (mut pose, error) = if pose1.t.z > 0.0 {
+			(pose1, err1)
+		} else if let Some(pose2) = pose2 {
+			if pose2.t.z > 0.0 {
+				(pose2, err2)
+			} else {
+				// Pick based on reproj error
+				if err1 < err2 {
+					(pose1, err1)
+				} else {
+					(pose2, err2)
+				}
+			}
+		} else {
+			(pose1, err1)
+		};
+
+		// Fix if both solutions are behind the tag
 		if pose.t.z < 0.0 {
-			// Invert translation
-			let t_matrix = matrix![
-				-1.0, 0.0, 0.0;
-				0.0, -1.0, 0.0;
-				0.0, 0.0, -1.0;
-			];
 			// Rotate 180 degrees around z
 			let r_matrix = matrix![
 				-1.0, 0.0, 0.0;
@@ -265,15 +308,11 @@ impl AprilTagDetection {
 				0.0, 0.0, 1.0;
 			];
 
-
-			pose.t = t_matrix * pose.t;
+			pose.t *= -1.0;
 			pose.r = r_matrix * pose.r;
 		}
 
-		Pose3DWithError {
-			pose,
-			error: reproj_err,
-		}
+		Pose3DWithError { pose, error }
 	}
 
 	/// Gets the perimeter of this tag in pixels

@@ -15,7 +15,7 @@ use crate::{
 		},
 		distort::OpenCVCameraIntrinsics,
 		geom::{PnPSolution, Pose3DWithError, PoseUpdate},
-		solve::{p3p::P3P, pose_covariance, AprilTagHomographySolver, PnPSolver},
+		solve::{ippe::IPPESolver, p3p::P3P, pose_covariance, AprilTagHomographySolver, PnPSolver},
 	},
 	output::VisionOutput,
 	util::Timer,
@@ -111,6 +111,7 @@ impl VisionThread {
 		filters: TagFilters,
 	) -> Self {
 		let estimator: Box<dyn PnPSolver + Send> = match estimator {
+			PoseEstimatorOption::IPPE => Box::new(IPPESolver::new()),
 			PoseEstimatorOption::Homography => Box::new(AprilTagHomographySolver::new()),
 			PoseEstimatorOption::P3P => Box::new(P3P::new()),
 		};

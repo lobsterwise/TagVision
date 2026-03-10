@@ -37,8 +37,10 @@ pub struct Config {
 /// Different backend implementations for pose estimation
 #[derive(Deserialize, Default, Clone, Copy)]
 pub enum PoseEstimatorOption {
-	#[serde(rename = "homography")]
 	#[default]
+	#[serde(rename = "ippe")]
+	IPPE,
+	#[serde(rename = "homography")]
 	Homography,
 	#[serde(rename = "p3p")]
 	P3P,

@@ -8,6 +8,7 @@ use crate::cv::{
 
 use super::geom::PnPSolution;
 
+pub mod ippe;
 pub mod p3p;
 pub mod polynomial;
 

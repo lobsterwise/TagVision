@@ -21,6 +21,7 @@ extern "C" {
 	pub fn tag36h11_create() -> *mut _AprilTagFamily;
 	pub fn tag36h11_destroy(tf: *mut _AprilTagFamily);
 	pub fn estimate_tag_pose(info: *mut _AprilTagDetectionInfo, pose: *mut _AprilTagPose) -> f64;
+	pub fn estimate_tag_pose_orthogonal_iteration(info: *mut _AprilTagDetectionInfo, err1: *mut c_double, pose1: *mut _AprilTagPose, err2: *mut c_double, pose2: *mut _AprilTagPose, nIters: c_int);
 }
 
 #[derive(Debug, Clone)]
@@ -272,6 +273,14 @@ impl _AprilTagPose {
 		Pose3D {
 			t: Vector3::from_row_slice(t),
 			r: Matrix3::from_row_slice(r),
+		}
+	}
+
+	pub unsafe fn to_pose3d_optional(&self) -> Option<Pose3D> {
+		if self.r.is_null() || self.t.is_null() {
+			None
+		} else {
+			Some(self.to_pose3d())
 		}
 	}
 }
