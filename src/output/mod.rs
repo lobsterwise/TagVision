@@ -17,7 +17,6 @@ use image::GrayImage;
 use nalgebra::{Isometry3, Matrix3x4, UnitQuaternion};
 use nt_client::{
 	math::{Pose3d, Quaternion, Rotation3d, Translation3d},
-	publish::NewPublisherError,
 	r#struct::{Struct, StructData},
 	ClientHandle, NewClientOptions,
 };
@@ -71,10 +70,10 @@ impl Output {
 		let output_modules = Arc::new(Mutex::new(HashMap::new()));
 		let camera_server = Arc::new(Mutex::new(None));
 		if !network_config.disabled {
+			let modules: Vec<_> = modules.iter().cloned().collect();
 			let fps_pub = fps_pub.clone();
 			let schema_pubs = schema_pubs.clone();
 			let output_modules = output_modules.clone();
-			let modules: Vec<_> = modules.iter().cloned().collect();
 			let camera_server = camera_server.clone();
 
 			let options = NewClientOptions {
@@ -89,20 +88,18 @@ impl Output {
 				move |client, reconn_client| {
 					let client = client.handle().clone();
 					let reconn_client = reconn_client.clone();
+
+					let modules = modules.clone();
+					let fps_pub = fps_pub.clone();
+					let schema_pubs = schema_pubs.clone();
+					let output_modules = output_modules.clone();
+					let camera_server = camera_server.clone();
 					tokio::spawn(async move {
 						// I want to initialize all the topics asynchronously, but it creates data type mismatch errors, so we have to do it synchronously
 						let mut output_modules2: HashMap<String, OutputModule> = HashMap::new();
 						for module_id in &modules {
 							let module =
 								OutputModule::new(module_id, &client, &reconn_client).await;
-							let module =
-								match module {
-									Ok(module) => module,
-									Err(e) => {
-										error!("Failed to initialize output for module '{module_id}': {e}");
-										continue;
-									}
-								};
 
 							output_modules2.insert(module_id.clone(), module);
 						}
@@ -110,28 +107,24 @@ impl Output {
 
 						info!("Module output publishers started");
 
-						if let Ok(pubsub) = reconn_client
+						let pubsub = reconn_client
 							.get_topic(
 								format!("{BASE_TABLE}/FPS"),
 								Duration::from_millis(10),
 								&client,
 							)
-							.await
-						{
-							*fps_pub.lock().await = Some(pubsub);
-						}
+							.await;
+						*fps_pub.lock().await = Some(pubsub);
 
 						info!("FPS publisher started");
 
-						if let Ok(pubs) = SchemaPublishers::new(
+						let pubs = SchemaPublishers::new(
 							&client,
 							&reconn_client,
 							network_config.enable_wpi_schemas,
 						)
-						.await
-						{
-							*schema_pubs.lock().await = Some(pubs);
-						}
+						.await;
+						*schema_pubs.lock().await = Some(pubs);
 
 						info!("Schema publishers started");
 
@@ -276,7 +269,7 @@ impl OutputThread {
 		self.last_frame_time = Some(now);
 
 		if let Ok(Some(lock)) = self.fps_pub.try_lock().as_deref_mut() {
-			lock.publish(fps as f64).await;
+			lock.publish(fps as f64);
 		}
 
 		// Console printing
@@ -334,20 +327,20 @@ impl OutputModule {
 		module_id: &str,
 		client: &ClientHandle,
 		reconnectable_client: &ReconnectableClient,
-	) -> Result<Self, NewPublisherError> {
+	) -> Self {
 		let table = format!("{BASE_TABLE}/{module_id}");
 
 		let data_pubsub = reconnectable_client
 			.get_topic(format!("{table}/Data"), Duration::from_micros(500), client)
-			.await?;
+			.await;
 		let tags_pubsub = reconnectable_client
 			.get_topic(format!("{table}/Tags"), Duration::from_millis(10), client)
-			.await?;
+			.await;
 
-		Ok(Self {
+		Self {
 			data_pubsub,
 			tags_pubsub,
-		})
+		}
 	}
 
 	/// Outputs an update to this module
@@ -358,8 +351,7 @@ impl OutputModule {
 		layout: &AprilTagLayout,
 	) {
 		self.data_pubsub
-			.publish(Struct(TagVisionPoseUpdate::from_update(update.clone())))
-			.await;
+			.publish(Struct(TagVisionPoseUpdate::from_update(update.clone())));
 
 		let default = Pose3D::default();
 		let tags = detections
@@ -404,7 +396,7 @@ impl OutputModule {
 			})
 			.collect();
 
-		self.tags_pubsub.publish(StructArray(tags)).await;
+		self.tags_pubsub.publish(StructArray(tags));
 	}
 }
 
@@ -430,7 +422,9 @@ impl TagVisionPoseUpdate {
 
 /// A tag detection that is sent over NT
 #[derive(Clone, Debug, StructData)]
-#[structdata(schema = "Pose3d pose; int32 id; Translation3d c1; Translation3d c2; Translation3d c3; Translation3d c4;")]
+#[structdata(
+	schema = "Pose3d pose; int32 id; Translation3d c1; Translation3d c2; Translation3d c3; Translation3d c4;"
+)]
 struct TagVisionDetection {
 	#[structdata(nested)]
 	pose: Pose3d,
@@ -466,14 +460,14 @@ impl SchemaPublishers {
 		client: &ClientHandle,
 		reconnectable_client: &ReconnectableClient,
 		enable_wpi: bool,
-	) -> Result<Self, NewPublisherError> {
+	) -> Self {
 		let tag_vision_pose_update = reconnectable_client
 			.get_topic(
 				format!("/.schema/struct:TagVisionPoseUpdate"),
 				Duration::from_millis(100),
 				&client,
 			)
-			.await?;
+			.await;
 
 		let tag_vision_detection = reconnectable_client
 			.get_topic(
@@ -481,7 +475,7 @@ impl SchemaPublishers {
 				Duration::from_millis(100),
 				&client,
 			)
-			.await?;
+			.await;
 
 		let quaternion = if enable_wpi {
 			Some(
@@ -491,7 +485,7 @@ impl SchemaPublishers {
 						Duration::from_millis(100),
 						&client,
 					)
-					.await?,
+					.await,
 			)
 		} else {
 			None
@@ -505,7 +499,7 @@ impl SchemaPublishers {
 						Duration::from_millis(100),
 						&client,
 					)
-					.await?,
+					.await,
 			)
 		} else {
 			None
@@ -519,7 +513,7 @@ impl SchemaPublishers {
 						Duration::from_millis(100),
 						&client,
 					)
-					.await?,
+					.await,
 			)
 		} else {
 			None
@@ -533,59 +527,45 @@ impl SchemaPublishers {
 						Duration::from_millis(100),
 						&client,
 					)
-					.await?,
+					.await,
 			)
 		} else {
 			None
 		};
 
-		Ok(Self {
+		Self {
 			tag_vision_pose_update,
 			tag_vision_detection,
 			quaternion,
 			rotation3d,
 			translation3d,
 			pose3d,
-		})
+		}
 	}
 
 	pub async fn publish(&mut self) {
-		let _ = self
-			.tag_vision_pose_update
-			.publish(rmpv::Value::Binary(
-				TagVisionPoseUpdate::schema().0.into_bytes(),
-			))
-			.await;
+		self.tag_vision_pose_update.publish(rmpv::Value::Binary(
+			TagVisionPoseUpdate::schema().0.into_bytes(),
+		));
 
-		let _ = self
-			.tag_vision_detection
-			.publish(rmpv::Value::Binary(
-				TagVisionDetection::schema().0.into_bytes(),
-			))
-			.await;
+		self.tag_vision_detection.publish(rmpv::Value::Binary(
+			TagVisionDetection::schema().0.into_bytes(),
+		));
 
 		if let Some(pubsub) = &mut self.quaternion {
-			let _ = pubsub
-				.publish(rmpv::Value::Binary(Quaternion::schema().0.into_bytes()))
-				.await;
+			pubsub.publish(rmpv::Value::Binary(Quaternion::schema().0.into_bytes()));
 		}
 
 		if let Some(pubsub) = &mut self.rotation3d {
-			let _ = pubsub
-				.publish(rmpv::Value::Binary(Rotation3d::schema().0.into_bytes()))
-				.await;
+			pubsub.publish(rmpv::Value::Binary(Rotation3d::schema().0.into_bytes()));
 		}
 
 		if let Some(pubsub) = &mut self.translation3d {
-			let _ = pubsub
-				.publish(rmpv::Value::Binary(Translation3d::schema().0.into_bytes()))
-				.await;
+			let _ = pubsub.publish(rmpv::Value::Binary(Translation3d::schema().0.into_bytes()));
 		}
 
 		if let Some(pubsub) = &mut self.pose3d {
-			let _ = pubsub
-				.publish(rmpv::Value::Binary(Pose3d::schema().0.into_bytes()))
-				.await;
+			pubsub.publish(rmpv::Value::Binary(Pose3d::schema().0.into_bytes()));
 		}
 	}
 }

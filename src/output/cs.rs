@@ -264,16 +264,16 @@ impl CameraInfoPubs {
 		let table = format!("/CameraPublisher/Module {module_id}");
 		let connected_pub = reconnectable_client
 			.get_topic(format!("{table}/connected"), Duration::from_secs(1), client)
-			.await?;
+			.await;
 		let streams_pub = reconnectable_client
 			.get_topic(format!("{table}/streams"), Duration::from_secs(1), client)
-			.await?;
+			.await;
 		let mode_pub = reconnectable_client
 			.get_topic(format!("{table}/mode"), Duration::from_secs(1), client)
-			.await?;
+			.await;
 		let modes_pub = reconnectable_client
 			.get_topic(format!("{table}/modes"), Duration::from_secs(1), client)
-			.await?;
+			.await;
 
 		Ok(Self {
 			connected_pub,
@@ -287,11 +287,11 @@ impl CameraInfoPubs {
 
 	/// Publishes info
 	async fn publish(&mut self) {
-		let _ = self.connected_pub.publish(true).await;
-		let _ = self.streams_pub.publish(self.streams.clone()).await;
+		self.connected_pub.publish(true);
+		self.streams_pub.publish(self.streams.clone());
 		if let Some(mode) = &self.mode {
-			let _ = self.mode_pub.publish(mode.clone()).await;
-			let _ = self.modes_pub.publish(vec![mode.clone()]).await;
+			self.mode_pub.publish(mode.clone());
+			self.modes_pub.publish(vec![mode.clone()]);
 		}
 	}
 

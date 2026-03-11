@@ -1,4 +1,7 @@
-use std::{sync::Arc, time::Duration};
+use std::{
+	sync::{Arc, LazyLock},
+	time::Duration,
+};
 
 use nt_client::{
 	data::{DataType, NetworkTableData},
@@ -11,12 +14,19 @@ use nt_client::{
 	topic::{Properties, Topic},
 	Client, ClientHandle, NewClientOptions,
 };
-use tokio::sync::{
-	broadcast::error::RecvError,
-	mpsc::{Receiver, Sender},
-	RwLock,
+use tokio::{
+	select,
+	sync::{
+		mpsc::{self, Receiver, Sender},
+		Mutex, RwLock,
+	},
 };
-use tracing::{error, info};
+use tracing::{debug, error, info, warn};
+
+/// Max timeout for NT publishes before cancelling
+const SEND_TIMEOUT: Duration = Duration::from_secs(2);
+/// Lock to prevent multiple pubsubs from connecting at the same time and mixing websocket messages
+static CONNECT_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
 
 /// A client that can restart itself and recreate all of it's topics and pubsubs if it disconnects
 pub struct ReconnectableClient {
@@ -28,9 +38,10 @@ impl ReconnectableClient {
 	pub fn spawn(
 		options: NewClientOptions,
 		reconnect_interval: Duration,
-		setup_fn: impl FnOnce(&Client, &Arc<ReconnectableClient>) + Send + 'static,
+		mut setup_fn: impl FnMut(&Client, &Arc<ReconnectableClient>) + Send + 'static + Clone,
 	) {
 		tokio::spawn(async move {
+			let mut has_done_first_connection = false;
 			let mut client = Client::new(options.clone());
 			let reconn_client = Arc::new(ReconnectableClient {
 				topics: RwLock::new(Vec::new()),
@@ -39,6 +50,7 @@ impl ReconnectableClient {
 				.connect_setup(|client| {
 					info!("NetworkTables connected, setting up output");
 					setup_fn(client, &reconn_client);
+					has_done_first_connection = true;
 				})
 				.await;
 
@@ -50,13 +62,19 @@ impl ReconnectableClient {
 
 					client = Client::new(options.clone());
 					let reconn_client = reconn_client.clone();
+					let mut setup_fn = setup_fn.clone();
 					connect_result = client
 						.connect_setup(move |client| {
 							info!("Successfully reconnected!");
-							let handle = client.handle().clone();
-							tokio::spawn(
-								async move { reconn_client.reconnect_topics(&handle).await },
-							);
+							if !has_done_first_connection {
+								info!("NetworkTables connected, setting up output");
+								setup_fn(client, &reconn_client);
+							} else {
+								let handle = client.handle().clone();
+								tokio::spawn(async move {
+									reconn_client.reconnect_topics(&handle).await
+								});
+							}
 						})
 						.await;
 				} else {
@@ -67,30 +85,33 @@ impl ReconnectableClient {
 	}
 
 	/// Gets a PubSub topic from the client
-	pub async fn get_topic<T: NetworkTableData>(
+	pub async fn get_topic<T: NetworkTableData + Send + Sync + 'static>(
 		&self,
 		topic_name: String,
 		update_interval: Duration,
 		client: &ClientHandle,
-	) -> Result<PubSub<T>, NewPublisherError> {
+	) -> PubSub<T> {
 		let topic = client.topic(&topic_name);
 
 		let (tx, rx) = tokio::sync::mpsc::channel(3);
-		let result = PubSub::with_reconnect_rx(topic, update_interval, Some(rx)).await?;
+		let result = PubSub::with_reconnect_rx(topic, update_interval, rx);
 
 		self.topics.write().await.push(ReconnectableTopic {
 			topic_name,
 			reconnect_sender: tx,
 		});
 
-		Ok(result)
+		result
 	}
 
 	/// Reconnects topics
 	async fn reconnect_topics(&self, client: &ClientHandle) {
+		info!("Reconnecting topics");
 		for topic in self.topics.read().await.iter() {
 			let new_topic = client.topic(&topic.topic_name);
-			let _ = topic.reconnect_sender.send(new_topic).await;
+			if let Err(e) = topic.reconnect_sender.send(new_topic).await {
+				error!("Failed to send topic reconnect: {e}");
+			}
 		}
 	}
 }
@@ -106,81 +127,141 @@ struct ReconnectableTopic {
 /// - Automatically reconnects when disconnected
 /// - Caches received values
 pub struct PubSub<T: NetworkTableData> {
-	publisher: Publisher<T>,
-	subscriber: Subscriber,
-	topic: Topic,
-	connected: bool,
-	update_interval: Duration,
-	full_reconnect_rx: Option<Receiver<Topic>>,
+	publish_tx: Sender<T>,
+	subscribe_rx: Receiver<T>,
 }
 
-impl<T: NetworkTableData> PubSub<T> {
+impl<T: NetworkTableData + Send + Sync + 'static> PubSub<T> {
 	/// Creates a new PubSub from the given topic and the given full reconnect receiver
-	async fn with_reconnect_rx(
-		topic: Topic,
-		update_interval: Duration,
-		rx: Option<Receiver<Topic>>,
-	) -> Result<Self, NewPublisherError> {
+	fn with_reconnect_rx(topic: Topic, update_interval: Duration, rx: Receiver<Topic>) -> Self {
 		let options = SubscriptionOptions {
 			periodic: Some(update_interval),
 			..Default::default()
 		};
 
-		let (publisher, subscriber) = Self::connect(&topic, options).await?;
+		let (publish_tx, publish_rx) = mpsc::channel(20);
+		let (subscribe_tx, subscribe_rx) = mpsc::channel(20);
 
-		Ok(Self {
-			publisher,
-			subscriber,
-			topic,
-			connected: true,
-			update_interval,
-			full_reconnect_rx: rx,
-		})
+		tokio::spawn(async move {
+			let (publisher, subscriber) = match PubSubThread::connect(&topic, options.clone()).await
+			{
+				Ok((publisher, subscriber)) => (Some(publisher), Some(subscriber)),
+				Err(e) => {
+					error!(
+						"Failed to do initial connection for pubsub {}: {e}",
+						topic.name()
+					);
+					(None, None)
+				}
+			};
+
+			let mut thread = PubSubThread {
+				publish_rx,
+				subscribe_tx,
+				publisher,
+				subscriber,
+				topic,
+				connected: true,
+				update_interval,
+				full_reconnect_rx: rx,
+			};
+
+			thread.run_forever().await;
+		});
+
+		Self {
+			publish_tx,
+			subscribe_rx,
+		}
 	}
 
 	/// Publishes a value to this pubsub
-	pub async fn publish(&mut self, value: T) {
-		self.check_full_reconnect().await;
-
-		// let _ = self.subscriber.recv().await;
-		if self.publisher.set(value).await.is_err() {
-			self.reconnect().await;
-		}
+	pub fn publish(&self, value: T) {
+		let _ = self.publish_tx.try_send(value);
 	}
 
-	/// Gets a value from this pubsub
+	/// Gets a value from this pubsub, waiting for it.
 	pub async fn get(&mut self) -> Option<T> {
-		self.check_full_reconnect().await;
+		self.subscribe_rx.recv().await
+	}
 
-		match self.subscriber.recv().await {
-			Ok(message) => {
-				if let ReceivedMessage::Updated((_, value)) = message {
-					T::from_value(value)
-				} else {
-					None
+	/// Gets a value from this pubsub if it is available
+	pub fn try_get(&mut self) -> Option<T> {
+		self.subscribe_rx.try_recv().ok()
+	}
+}
+
+struct PubSubThread<T: NetworkTableData + Send + Sync> {
+	publish_rx: Receiver<T>,
+	subscribe_tx: Sender<T>,
+	full_reconnect_rx: Receiver<Topic>,
+	publisher: Option<Publisher<T>>,
+	subscriber: Option<Subscriber>,
+	topic: Topic,
+	connected: bool,
+	update_interval: Duration,
+}
+
+impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
+	async fn run_forever(&mut self) {
+		loop {
+			select! {
+				value = self.publish_rx.recv() => {
+					if let Some(value) = value {
+						self.publish(value).await;
+					} else {
+						break;
+					}
 				}
-			}
-			Err(e) => {
-				if let RecvError::Closed = e {
-					self.reconnect().await;
+				value = async { match &mut self.subscriber {
+					Some(subscriber) => Some(subscriber.recv().await),
+					None => None
+				} }, if self.subscriber.is_some() => {
+					let Some(value) = value else {
+						return;
+					};
+
+					match value {
+						Ok(message) => {
+							if let ReceivedMessage::Updated((_, value)) = message {
+								if let Some(value) = T::from_value(value) {
+									let _ = self.subscribe_tx.try_send(value);
+								}
+							}
+						}
+						Err(e) => {
+							error!("Subscription error: {e}");
+						}
+					}
 				}
-				None
+				new_topic = self.full_reconnect_rx.recv() => {
+					if let Some(new_topic) = new_topic {
+						self.topic = new_topic;
+						self.reconnect().await;
+					}
+				}
 			}
 		}
 	}
 
-	/// Checks for a full client reconnect
-	async fn check_full_reconnect(&mut self) {
-		if let Some(rx) = &mut self.full_reconnect_rx {
-			if let Ok(topic) = rx.try_recv() {
-				self.topic = topic;
-				self.reconnect().await;
+	/// Attempts to publish a value
+	async fn publish(&mut self, value: T) {
+		if let Some(publisher) = &mut self.publisher {
+			select! {
+				result = publisher.set(value) => {
+					if let Err(e) = result {
+						debug!("Publish failed: {e}");
+					}
+				}
+				_ = tokio::time::sleep(SEND_TIMEOUT) => {
+					warn!("Publish timed out");
+				}
 			}
 		}
 	}
 
 	/// Disconnects the pubsub and attempts to reconnect it. It may not succeed.
-	pub async fn reconnect(&mut self) {
+	async fn reconnect(&mut self) {
 		if self.connected {
 			error!("Topic {} reconnecting...", self.topic.name());
 		}
@@ -192,8 +273,8 @@ impl<T: NetworkTableData> PubSub<T> {
 			..Default::default()
 		};
 		if let Ok((publisher, subscriber)) = Self::connect(&self.topic, options).await {
-			self.publisher = publisher;
-			self.subscriber = subscriber;
+			self.publisher = Some(publisher);
+			self.subscriber = Some(subscriber);
 			self.connected = true;
 		}
 	}
@@ -203,13 +284,20 @@ impl<T: NetworkTableData> PubSub<T> {
 		topic: &Topic,
 		sub_options: SubscriptionOptions,
 	) -> Result<(Publisher<T>, Subscriber), NewPublisherError> {
+		let _lock = CONNECT_LOCK.lock().await;
+
 		let Ok(subscriber) = topic.subscribe(sub_options).await else {
 			return Err(NewPublisherError::Recv(
 				tokio::sync::broadcast::error::RecvError::Closed,
 			));
 		};
 
-		let publisher = topic.publish(Properties::default()).await?;
+		let publisher = topic
+			.publish(Properties {
+				cached: Some(true),
+				..Default::default()
+			})
+			.await?;
 
 		Ok((publisher, subscriber))
 	}
