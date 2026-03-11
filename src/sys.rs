@@ -9,20 +9,12 @@ pub fn generate_service(config_path: &str) -> std::io::Result<String> {
 	let executable_path = std::env::current_exe()?;
 	let executable_path = executable_path.to_string_lossy();
 
-	let Ok(user) = std::env::var("USER") else {
-		return Err(std::io::Error::new(
-			std::io::ErrorKind::NotFound,
-			"User environment variable missing",
-		));
-	};
-
 	Ok(format!(
 		r#"[Unit]
 Description=AprilTag Vision System
 
 [Service]
 Type=simple
-User={user}
 Restart=always
 RestartSec=2
 ExecStart={executable_path} --config {config_path}

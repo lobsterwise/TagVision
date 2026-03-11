@@ -14,4 +14,15 @@ cmake -B build \
 	-DBUILD_PYTHON_WRAPPER=OFF
 sudo DESTDIR=/usr/aarch64-linux-gnu cmake --build build --target install
 cd ..
+
+cd IPPE/cpp
+cmake -B build \
+	-DCMAKE_TOOLCHAIN_FILE=../../Toolchain-OrangePi.cmake \
+	-DCMAKE_INSTALL_PREFIX=/usr \
+	-DCMAKE_BUILD_TYPE=RelWithDebInfo \
+	-DBUILD_SHARED_LIBS=OFF \
+	-DBUILD_EXAMPLES=OFF
+sudo DESTDIR=/usr/aarch64-linux-gnu cmake --build build --target install
+cd ../..
+
 cargo build --profile deploy --target aarch64-unknown-linux-gnu --no-default-features --features native
