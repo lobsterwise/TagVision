@@ -39,8 +39,19 @@ impl PnPSolver for IPPESolver {
 	) -> Option<crate::cv::geom::PnPSolution> {
 		let world_to_tag = layout.get_tag_pose(detection.id)?;
 
-		let image_points = detection.corners.transpose().to_owned();
-		let image_points = image_points.as_slice().as_ptr();
+		// The image points are a interleaved 2-channel, so pass it in row-major.
+		// The library expects start at top left, clockwise
+		let image_points = [
+			detection.corners.m14,
+			detection.corners.m24,
+			detection.corners.m13,
+			detection.corners.m23,
+			detection.corners.m12,
+			detection.corners.m22,
+			detection.corners.m11,
+			detection.corners.m21,
+		];
+		let image_points = image_points.as_ptr();
 
 		let (cam_matrix, dist) = intrinsics.to_matrices();
 
@@ -87,24 +98,32 @@ impl PnPSolver for IPPESolver {
 			error: err2 as f64,
 		};
 
-		let camera_to_tag = choose_pose(pose1, pose2);
+		let pose = choose_pose(pose1, pose2);
+		let mut camera_to_tag = pose.pose;
+		let error = pose.error;
 
 		// Remap / rotate axes into correct frame
-		let mut tag_to_camera = camera_to_tag.pose.inverse();
 		let axis_remap = matrix![
-			0.0, 0.0, -1.0;
+			0.0, 0.0, 1.0;
 			1.0, 0.0, 0.0;
-			0.0, -1.0, 0.0
+			0.0, 1.0, 0.0
 		];
+		camera_to_tag.r = axis_remap * camera_to_tag.r * axis_remap.transpose();
+		camera_to_tag.t = axis_remap * camera_to_tag.t;
+
+		// The pose rotates in place but we want to swing around the camera.
+		camera_to_tag.t = camera_to_tag.r.transpose() * camera_to_tag.t;
+
+		let mut tag_to_camera = camera_to_tag.inverse();
+
 		// Rotate to face the tag instead of away from it
 		let face_tag = matrix![
 			1.0, 0.0, 0.0;
-			0.0, 1.0, 0.0;
-			0.0, 0.0, 1.0
+			0.0, -1.0, 0.0;
+			0.0, 0.0, -1.0
 		];
-		tag_to_camera.r = axis_remap * tag_to_camera.r * axis_remap.transpose();
+
 		tag_to_camera.r = tag_to_camera.r * face_tag;
-		tag_to_camera.t = axis_remap * tag_to_camera.t;
 
 		// Compute relative to tag
 		let world_to_camera = Pose3D {
@@ -114,7 +133,7 @@ impl PnPSolver for IPPESolver {
 
 		Some(PnPSolution::Multi(vec![Pose3DWithError {
 			pose: world_to_camera,
-			error: camera_to_tag.error,
+			error,
 		}]))
 	}
 }

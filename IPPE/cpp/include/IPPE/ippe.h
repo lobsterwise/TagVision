@@ -3,6 +3,7 @@
 
 #include <opencv2/core.hpp>
 #include <opencv2/calib3d.hpp>
+#include <iostream>
 
 #include <limits>
 
@@ -220,7 +221,7 @@ void normalizeDataIsotropic(cv::InputArray Data, cv::OutputArray DataN, cv::Outp
 }
 
 extern "C" void ippe_solve_square(float squareLength, double* _imagePoints, double* _cameraMatrix, double* _distCoeffs, double* _rvec1, double* _tvec1, float* reprojErr1, double* _rvec2, double* _tvec2, float* reprojErr2) {
-    cv::Mat img = cv::Mat(2, 4, CV_64FC1, _imagePoints);
+    cv::Mat img = cv::Mat(1, 4, CV_64FC2, _imagePoints);
     cv::Mat cam = cv::Mat(3, 3, CV_64FC1, _cameraMatrix);
     cv::Mat dist = cv::Mat(5, 1, CV_64FC1, _distCoeffs);
     cv::Mat r1 = cv::Mat(3, 1, CV_64FC1);

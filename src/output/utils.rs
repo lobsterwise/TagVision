@@ -295,6 +295,7 @@ impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
 		let publisher = topic
 			.publish(Properties {
 				cached: Some(true),
+				retained: Some(true),
 				..Default::default()
 			})
 			.await?;
