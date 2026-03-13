@@ -20,7 +20,6 @@ extern "C" {
 	pub fn apriltag_detections_destroy(detections: *mut _ZArray);
 	pub fn tag36h11_create() -> *mut _AprilTagFamily;
 	pub fn tag36h11_destroy(tf: *mut _AprilTagFamily);
-	pub fn estimate_tag_pose(info: *mut _AprilTagDetectionInfo, pose: *mut _AprilTagPose) -> f64;
 	pub fn estimate_tag_pose_orthogonal_iteration(info: *mut _AprilTagDetectionInfo, err1: *mut c_double, pose1: *mut _AprilTagPose, err2: *mut c_double, pose2: *mut _AprilTagPose, nIters: c_int);
 }
 

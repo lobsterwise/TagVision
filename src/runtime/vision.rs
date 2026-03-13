@@ -15,7 +15,10 @@ use crate::{
 		},
 		distort::OpenCVCameraIntrinsics,
 		geom::{PnPSolution, Pose3DWithError, PoseCovariance, PoseUpdate},
-		solve::{ippe::IPPESolver, p3p::P3P, pose_covariance, AprilTagHomographySolver, PnPSolver},
+		solve::{
+			homography::AprilTagHomographySolver, ippe::IPPESolver, p3p::P3P, pose_covariance,
+			PnPSolver,
+		},
 	},
 	output::VisionOutput,
 	util::Timer,
@@ -215,11 +218,6 @@ fn solve_tags(
 			continue;
 		}
 
-		let tag_corners_3d = layout.get_tag_corners(detection.id);
-		let Some(tag_corners_3d) = tag_corners_3d else {
-			continue;
-		};
-
 		let solution = solver.solve(layout, &detection, intrinsics);
 		let Some(solution) = solution else {
 			continue;
@@ -245,6 +243,7 @@ fn solve_tags(
 						}
 					}
 
+					let tag_corners_3d = layout.get_local_tag_corners_xy();
 					let covariance = pose_covariance(
 						&pose.pose.r,
 						&pose.pose.t,

@@ -4,12 +4,8 @@ use std::{
 };
 
 use nt_client::{
-	data::{DataType, NetworkTableData},
+	data::NetworkTableData,
 	publish::{NewPublisherError, Publisher},
-	r#struct::{
-		byte::{ByteBuffer, ByteReader},
-		StructData,
-	},
 	subscribe::{ReceivedMessage, Subscriber, SubscriptionOptions},
 	topic::{Properties, Topic},
 	Client, ClientHandle, NewClientOptions,
@@ -17,6 +13,7 @@ use nt_client::{
 use tokio::{
 	select,
 	sync::{
+		broadcast,
 		mpsc::{self, Receiver, Sender},
 		Mutex, RwLock,
 	},
@@ -89,7 +86,7 @@ impl ReconnectableClient {
 	}
 
 	/// Gets a PubSub topic from the client
-	pub async fn get_topic<T: NetworkTableData + Send + Sync + 'static>(
+	pub async fn get_topic<T: NetworkTableData + Send + Sync + 'static + Clone>(
 		&self,
 		topic_name: String,
 		update_interval: Duration,
@@ -132,10 +129,10 @@ struct ReconnectableTopic {
 /// - Caches received values
 pub struct PubSub<T: NetworkTableData> {
 	publish_tx: Sender<T>,
-	subscribe_rx: Receiver<T>,
+	subscribe_rx: broadcast::Receiver<T>,
 }
 
-impl<T: NetworkTableData + Send + Sync + 'static> PubSub<T> {
+impl<T: NetworkTableData + Send + Sync + 'static + Clone> PubSub<T> {
 	/// Creates a new PubSub from the given topic and the given full reconnect receiver
 	fn with_reconnect_rx(topic: Topic, update_interval: Duration, rx: Receiver<Topic>) -> Self {
 		let options = SubscriptionOptions {
@@ -144,7 +141,7 @@ impl<T: NetworkTableData + Send + Sync + 'static> PubSub<T> {
 		};
 
 		let (publish_tx, publish_rx) = mpsc::channel(20);
-		let (subscribe_tx, subscribe_rx) = mpsc::channel(20);
+		let (subscribe_tx, subscribe_rx) = broadcast::channel(20);
 
 		tokio::spawn(async move {
 			let (publisher, subscriber) = match PubSubThread::connect(&topic, options.clone()).await
@@ -186,18 +183,23 @@ impl<T: NetworkTableData + Send + Sync + 'static> PubSub<T> {
 
 	/// Gets a value from this pubsub, waiting for it.
 	pub async fn get(&mut self) -> Option<T> {
-		self.subscribe_rx.recv().await
+		self.subscribe_rx.recv().await.ok()
 	}
 
 	/// Gets a value from this pubsub if it is available
 	pub fn try_get(&mut self) -> Option<T> {
 		self.subscribe_rx.try_recv().ok()
 	}
+
+	/// Gets a subscribed value that is automatically updated
+	pub fn subscribe(&self, default: T) -> SubscribedValue<T> {
+		SubscribedValue::new(self.subscribe_rx.resubscribe(), default)
+	}
 }
 
 struct PubSubThread<T: NetworkTableData + Send + Sync> {
 	publish_rx: Receiver<T>,
-	subscribe_tx: Sender<T>,
+	subscribe_tx: broadcast::Sender<T>,
 	full_reconnect_rx: Receiver<Topic>,
 	publisher: Option<Publisher<T>>,
 	subscriber: Option<Subscriber>,
@@ -229,7 +231,7 @@ impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
 						Ok(message) => {
 							if let ReceivedMessage::Updated((_, value)) = message {
 								if let Some(value) = T::from_value(value) {
-									let _ = self.subscribe_tx.try_send(value);
+									let _ = self.subscribe_tx.send(value);
 								}
 							}
 						}
@@ -323,32 +325,22 @@ impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
 	}
 }
 
-/// Struct array type publishable to NT
-#[derive(Clone, Debug)]
-pub struct StructArray<T>(pub Vec<T>);
-
-impl<T: StructData + StructDataSize> NetworkTableData for StructArray<T> {
-	fn data_type() -> DataType {
-		DataType::StructArray(T::struct_type_name())
-	}
-
-	fn from_value(value: rmpv::Value) -> Option<Self> {
-		match value {
-			rmpv::Value::Binary(bytes) => {
-				T::unpack_vec(&mut ByteReader::new(&bytes), bytes.len() / T::size()).map(Self)
-			}
-			_ => None,
-		}
-	}
-
-	fn into_value(self) -> rmpv::Value {
-		let mut buf = ByteBuffer::new();
-		T::pack_iter(self.0, &mut buf);
-		rmpv::Value::Binary(buf.into())
-	}
+/// A value tied to an NT subscription
+pub struct SubscribedValue<T> {
+	rx: broadcast::Receiver<T>,
+	value: T,
 }
 
-/// Trait for NT StructData types that have a size
-pub trait StructDataSize {
-	fn size() -> usize;
+impl<T: Clone> SubscribedValue<T> {
+	fn new(rx: broadcast::Receiver<T>, default: T) -> Self {
+		Self { rx, value: default }
+	}
+
+	/// Gets the value
+	pub fn get(&mut self) -> &T {
+		if let Ok(new) = self.rx.try_recv() {
+			self.value = new;
+		}
+		&self.value
+	}
 }

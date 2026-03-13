@@ -57,7 +57,6 @@ impl Runtime {
 			output_receiver,
 			config.network.clone(),
 			&modules,
-			layout.clone(),
 			config.photo_logging.clone(),
 		)
 		.await;

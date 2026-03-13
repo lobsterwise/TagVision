@@ -1,4 +1,4 @@
-use nalgebra::{Isometry3, Matrix3, Matrix3x1, Matrix6, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{Matrix3, Matrix3x1, Matrix6, Vector3};
 
 use super::apriltag::layout::LayoutPose;
 
@@ -36,27 +36,6 @@ impl Pose3D {
 			nalgebra::matrix![pose.translation.x; pose.translation.y; pose.translation.z];
 
 		Self::from_matrices(translation_matrix, rotation_matrix)
-	}
-
-	pub fn add(&self, other: &Self) -> Self {
-		Self {
-			t: self.t + other.t,
-			r: self.r * other.r,
-		}
-	}
-
-	pub fn to_isometry(&self) -> Isometry3<f64> {
-		Isometry3::from_parts(
-			Translation3::from(self.t),
-			UnitQuaternion::from_matrix(&self.r),
-		)
-	}
-
-	pub fn from_isometry(isometry: Isometry3<f64>) -> Self {
-		Self {
-			t: isometry.translation.vector,
-			r: isometry.rotation.to_rotation_matrix().matrix().clone(),
-		}
 	}
 
 	pub fn inverse(&self) -> Self {

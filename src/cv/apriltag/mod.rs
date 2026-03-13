@@ -365,6 +365,22 @@ impl AprilTagDetection {
 				return false;
 			}
 		}
+		if let Some(max_ratio) = filters.max_ratio {
+			let length1 = (self.corners.column(1) - self.corners.column(0)).norm();
+			let length2 = (self.corners.column(3) - self.corners.column(0)).norm();
+			let larger = length1.max(length2);
+			let smaller = length1.min(length2);
+			
+			let ratio = if smaller == 0.0 {
+				1.0
+			} else {
+				larger / smaller
+			};
+
+			if ratio > max_ratio {
+				return false;
+			}
+		}
 
 		false
 	}
