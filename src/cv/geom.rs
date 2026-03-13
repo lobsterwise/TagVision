@@ -1,4 +1,4 @@
-use nalgebra::{Isometry3, Matrix3, Matrix3x1, Translation3, UnitQuaternion, Vector3};
+use nalgebra::{Isometry3, Matrix3, Matrix3x1, Matrix6, Translation3, UnitQuaternion, Vector3};
 
 use super::apriltag::layout::LayoutPose;
 
@@ -85,4 +85,29 @@ pub enum PnPSolution {
 pub struct PoseUpdate {
 	pub pose: Pose3DWithError,
 	pub timestamp: f64,
+	pub tag: u8,
+	pub covariance: PoseCovariance,
+}
+
+#[derive(Clone, Debug)]
+pub struct PoseCovariance {
+	pub x: f64,
+	pub y: f64,
+	pub z: f64,
+	pub rx: f64,
+	pub ry: f64,
+	pub rz: f64,
+}
+
+impl PoseCovariance {
+	pub fn from_matrix(mat: Matrix6<f64>) -> Self {
+		Self {
+			rx: mat[(0, 0)].sqrt(),
+			ry: mat[(1, 1)].sqrt(),
+			rz: mat[(2, 2)].sqrt(),
+			x: mat[(3, 3)].sqrt(),
+			y: mat[(4, 4)].sqrt(),
+			z: mat[(5, 5)].sqrt(),
+		}
+	}
 }

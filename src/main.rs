@@ -76,6 +76,9 @@ async fn main() {
 					.expect("Failed to generate service");
 
 				let service_path = get_service_path().expect("Failed to get service path");
+				if let Some(parent) = service_path.parent() {
+					let _ = std::fs::create_dir_all(parent);
+				}
 				std::fs::write(service_path, service).expect("Failed to write service file");
 
 				return;

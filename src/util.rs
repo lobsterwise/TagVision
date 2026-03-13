@@ -42,6 +42,17 @@ impl Timer {
 			false
 		}
 	}
+
+	/// Waits until this timer reaches an interval, then restarts it
+	pub async fn wait_interval(&mut self, interval: Duration) {
+		let check_interval = interval / 1000;
+		loop {
+			if self.interval(interval) {
+				break;
+			}
+			tokio::time::sleep(check_interval).await;
+		}
+	}
 }
 
 /// Moving average of floats

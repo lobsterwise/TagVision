@@ -14,7 +14,7 @@ use std::{
 };
 
 use image::GrayImage;
-use nalgebra::{Isometry3, Matrix3x4, UnitQuaternion};
+use nalgebra::UnitQuaternion;
 use nt_client::{
 	math::{Pose3d, Quaternion, Rotation3d, Translation3d},
 	r#struct::{Struct, StructData},
@@ -223,6 +223,7 @@ impl OutputThread {
 				}
 
 				let _ = self.photo_logger.log(&output.module, rgb_image);
+				self.detection_count += 1;
 			}
 
 			if let Some(update) = output.update {
@@ -237,7 +238,6 @@ impl OutputThread {
 				}
 			}
 
-			self.event_count += 1;
 			self.detection_time_sum += output.detection_time;
 			self.estimation_time_sum += output.estimation_time;
 			let now = SystemTime::now()
@@ -353,61 +353,70 @@ impl OutputModule {
 		self.data_pubsub
 			.publish(Struct(TagVisionPoseUpdate::from_update(update.clone())));
 
-		let default = Pose3D::default();
-		let tags = detections
-			.iter()
-			.map(|x| {
-				let pose = layout.get_tag_pose(x.id).unwrap_or(&default);
-				let pose = Pose3D::from_isometry(
-					pose.to_isometry() * Isometry3::translation(0.0, 0.0, 0.0),
-				);
-				let pose = create_sendable_pose(&pose);
+		// let default = Pose3D::default();
+		// let tags = detections
+		// 	.iter()
+		// 	.map(|x| {
+		// 		let pose = layout.get_tag_pose(x.id).unwrap_or(&default);
+		// 		let pose = Pose3D::from_isometry(
+		// 			pose.to_isometry() * Isometry3::translation(0.0, 0.0, 0.0),
+		// 		);
+		// 		let pose = create_sendable_pose(&pose);
 
-				let corners = layout.get_tag_corners(x.id).unwrap_or(Matrix3x4::zeros());
-				let c1 = Translation3d {
-					x: corners.m11,
-					y: corners.m21,
-					z: corners.m31,
-				};
-				let c2 = Translation3d {
-					x: corners.m12,
-					y: corners.m22,
-					z: corners.m32,
-				};
-				let c3 = Translation3d {
-					x: corners.m13,
-					y: corners.m23,
-					z: corners.m33,
-				};
-				let c4 = Translation3d {
-					x: corners.m14,
-					y: corners.m24,
-					z: corners.m34,
-				};
+		// 		let corners = layout.get_tag_corners(x.id).unwrap_or(Matrix3x4::zeros());
+		// 		let c1 = Translation3d {
+		// 			x: corners.m11,
+		// 			y: corners.m21,
+		// 			z: corners.m31,
+		// 		};
+		// 		let c2 = Translation3d {
+		// 			x: corners.m12,
+		// 			y: corners.m22,
+		// 			z: corners.m32,
+		// 		};
+		// 		let c3 = Translation3d {
+		// 			x: corners.m13,
+		// 			y: corners.m23,
+		// 			z: corners.m33,
+		// 		};
+		// 		let c4 = Translation3d {
+		// 			x: corners.m14,
+		// 			y: corners.m24,
+		// 			z: corners.m34,
+		// 		};
 
-				TagVisionDetection {
-					id: x.id as i32,
-					pose,
-					c1,
-					c2,
-					c3,
-					c4,
-				}
-			})
-			.collect();
+		// 		TagVisionDetection {
+		// 			id: x.id as i32,
+		// 			pose,
+		// 			c1,
+		// 			c2,
+		// 			c3,
+		// 			c4,
+		// 		}
+		// 	})
+		// 	.collect();
 
-		self.tags_pubsub.publish(StructArray(tags));
+		// self.tags_pubsub.publish(StructArray(tags));
 	}
 }
 
 /// A PoseUpdate that is sent over NT
 #[derive(Clone, Debug, StructData)]
-#[structdata(schema = "Pose3d pose; double error; double timestamp;")]
+#[structdata(
+	schema = "Pose3d pose; double error; double timestamp; int16 tag; double covx; double covy; double covz; double covrx; double covry; double covrz;"
+)]
 struct TagVisionPoseUpdate {
 	#[structdata(nested)]
 	pose: Pose3d,
 	error: f64,
 	timestamp: f64,
+	tag: i16,
+	covx: f64,
+	covy: f64,
+	covz: f64,
+	covrx: f64,
+	covry: f64,
+	covrz: f64,
 }
 
 impl TagVisionPoseUpdate {
@@ -416,6 +425,13 @@ impl TagVisionPoseUpdate {
 			pose: create_sendable_pose(&update.pose.pose),
 			error: update.pose.error,
 			timestamp: update.timestamp,
+			tag: update.tag as i16,
+			covx: update.covariance.x,
+			covy: update.covariance.y,
+			covz: update.covariance.z,
+			covrx: update.covariance.rx,
+			covry: update.covariance.ry,
+			covrz: update.covariance.rz,
 		}
 	}
 }

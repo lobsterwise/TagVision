@@ -23,8 +23,12 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+use crate::util::Timer;
+
 /// Max timeout for NT publishes before cancelling
 const SEND_TIMEOUT: Duration = Duration::from_secs(2);
+/// Reconnect interval for individual pubsubs
+const RECONNECT_INTERVAL: Duration = Duration::from_secs(1);
 /// Lock to prevent multiple pubsubs from connecting at the same time and mixing websocket messages
 static CONNECT_LOCK: LazyLock<Arc<Mutex<()>>> = LazyLock::new(|| Arc::new(Mutex::new(())));
 
@@ -145,7 +149,7 @@ impl<T: NetworkTableData + Send + Sync + 'static> PubSub<T> {
 		tokio::spawn(async move {
 			let (publisher, subscriber) = match PubSubThread::connect(&topic, options.clone()).await
 			{
-				Ok((publisher, subscriber)) => (Some(publisher), Some(subscriber)),
+				Ok((publisher, subscriber)) => (publisher, Some(subscriber)),
 				Err(e) => {
 					error!(
 						"Failed to do initial connection for pubsub {}: {e}",
@@ -161,8 +165,8 @@ impl<T: NetworkTableData + Send + Sync + 'static> PubSub<T> {
 				publisher,
 				subscriber,
 				topic,
-				connected: true,
 				update_interval,
+				reconnect_timer: Timer::new(),
 				full_reconnect_rx: rx,
 			};
 
@@ -198,8 +202,8 @@ struct PubSubThread<T: NetworkTableData + Send + Sync> {
 	publisher: Option<Publisher<T>>,
 	subscriber: Option<Subscriber>,
 	topic: Topic,
-	connected: bool,
 	update_interval: Duration,
+	reconnect_timer: Timer,
 }
 
 impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
@@ -234,6 +238,9 @@ impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
 						}
 					}
 				}
+				_ = self.reconnect_timer.wait_interval(RECONNECT_INTERVAL), if self.subscriber.is_none() || self.publisher.is_none() => {
+					self.reconnect().await;
+				}
 				new_topic = self.full_reconnect_rx.recv() => {
 					if let Some(new_topic) = new_topic {
 						self.topic = new_topic;
@@ -247,6 +254,7 @@ impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
 	/// Attempts to publish a value
 	async fn publish(&mut self, value: T) {
 		if let Some(publisher) = &mut self.publisher {
+			debug!("Publishing");
 			select! {
 				result = publisher.set(value) => {
 					if let Err(e) = result {
@@ -262,20 +270,22 @@ impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
 
 	/// Disconnects the pubsub and attempts to reconnect it. It may not succeed.
 	async fn reconnect(&mut self) {
-		if self.connected {
+		if self.publisher.is_none() || self.subscriber.is_none() {
 			error!("Topic {} reconnecting...", self.topic.name());
 		}
-
-		self.connected = false;
 
 		let options = SubscriptionOptions {
 			periodic: Some(self.update_interval),
 			..Default::default()
 		};
 		if let Ok((publisher, subscriber)) = Self::connect(&self.topic, options).await {
-			self.publisher = Some(publisher);
+			self.publisher = publisher;
 			self.subscriber = Some(subscriber);
-			self.connected = true;
+			if self.publisher.is_some() {
+				info!("Topic {} reconnected!", self.topic.name());
+			} else {
+				info!("Topic {} did not reconnect", self.topic.name());
+			}
 		}
 	}
 
@@ -283,7 +293,7 @@ impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
 	async fn connect(
 		topic: &Topic,
 		sub_options: SubscriptionOptions,
-	) -> Result<(Publisher<T>, Subscriber), NewPublisherError> {
+	) -> Result<(Option<Publisher<T>>, Subscriber), NewPublisherError> {
 		let _lock = CONNECT_LOCK.lock().await;
 
 		let Ok(subscriber) = topic.subscribe(sub_options).await else {
@@ -292,13 +302,22 @@ impl<T: NetworkTableData + Send + Sync> PubSubThread<T> {
 			));
 		};
 
-		let publisher = topic
-			.publish(Properties {
-				cached: Some(true),
-				retained: Some(true),
-				..Default::default()
-			})
-			.await?;
+		let properties = Properties {
+			cached: Some(true),
+			retained: Some(false),
+			..Default::default()
+		};
+
+		let publisher = select! {
+			publisher = topic.publish(properties) => publisher.ok(),
+			_ = tokio::time::sleep(Duration::from_secs(1)) => None,
+		};
+
+		if publisher.is_some() {
+			info!("Topic {} connected", topic.name());
+		} else {
+			warn!("Topic {} connection failed", topic.name());
+		}
 
 		Ok((publisher, subscriber))
 	}

@@ -1,4 +1,4 @@
-use std::{ops::Sub, sync::Arc};
+use std::{collections::HashMap, ops::Sub, sync::Arc};
 
 use tokio::sync::{
 	mpsc::{self, error::TrySendError},
@@ -14,7 +14,7 @@ use crate::{
 			AprilTagDetector,
 		},
 		distort::OpenCVCameraIntrinsics,
-		geom::{PnPSolution, Pose3DWithError, PoseUpdate},
+		geom::{PnPSolution, Pose3DWithError, PoseCovariance, PoseUpdate},
 		solve::{ippe::IPPESolver, p3p::P3P, pose_covariance, AprilTagHomographySolver, PnPSolver},
 	},
 	output::VisionOutput,
@@ -43,14 +43,14 @@ impl VisionRuntime {
 		let (sender, receiver) = mpsc::channel::<VisionThreadInput>(QUEUE_SIZE);
 
 		let receiver = Arc::new(Mutex::new(receiver));
-		let last_pose = Arc::new(Mutex::new(None));
+		let last_poses = Arc::new(Mutex::new(HashMap::new()));
 
 		for _ in 0..runtime_config.vision_threads {
 			let vision_thread_data = VisionThread::new(
 				receiver.clone(),
 				output_sender.clone(),
 				estimator,
-				last_pose.clone(),
+				last_poses.clone(),
 				params.clone(),
 				layout.clone(),
 				filters.clone(),
@@ -90,7 +90,7 @@ pub struct VisionThread {
 	input: Arc<Mutex<mpsc::Receiver<VisionThreadInput>>>,
 	output: mpsc::Sender<VisionOutput>,
 	estimator: Box<dyn PnPSolver + Send>,
-	last_pose: Arc<Mutex<Option<Pose3DWithError>>>,
+	last_poses: Arc<Mutex<HashMap<u8, Pose3DWithError>>>,
 	params: AprilTagDetectorParams,
 	layout: AprilTagLayout,
 	filters: TagFilters,
@@ -101,7 +101,7 @@ impl VisionThread {
 		input_channel: Arc<Mutex<mpsc::Receiver<VisionThreadInput>>>,
 		output_channel: mpsc::Sender<VisionOutput>,
 		estimator: &PoseEstimatorOption,
-		last_pose: Arc<Mutex<Option<Pose3DWithError>>>,
+		last_poses: Arc<Mutex<HashMap<u8, Pose3DWithError>>>,
 		params: AprilTagDetectorParams,
 		layout: AprilTagLayout,
 		filters: TagFilters,
@@ -116,7 +116,7 @@ impl VisionThread {
 			input: input_channel,
 			output: output_channel,
 			estimator,
-			last_pose,
+			last_poses,
 			params,
 			layout,
 			filters,
@@ -145,38 +145,51 @@ impl VisionThread {
 			let detection_time = timer.get_elapsed();
 
 			timer.restart();
-			let last_pose = self.last_pose.lock().await.clone();
-			let pose = solve_tags(
+			let last_poses = self.last_poses.lock().await.clone();
+			let updates = solve_tags(
 				&mut self.estimator,
 				&detections,
 				&input.intrinsics,
 				&self.layout,
 				&self.filters,
-				last_pose,
+				last_poses,
+				input.frame.timestamp,
 			);
 			let estimation_time = timer.get_elapsed();
 
-			if let Some(pose) = &pose {
-				*self.last_pose.lock().await = Some(pose.clone());
-			}
-
-			let update = pose.map(|pose| PoseUpdate {
-				pose,
-				timestamp: input.frame.timestamp,
-			});
-
-			let output = VisionOutput {
-				module: input.module,
-				update,
+			// Send an update with the frame
+			let frame_output = VisionOutput {
+				module: input.module.clone(),
+				update: None,
 				frame: Some(input.frame.image),
 				timestamp: input.frame.timestamp,
 				detections: detections.to_vec(),
 				detection_time: detection_time.as_secs_f32(),
 				estimation_time: estimation_time.as_secs_f32(),
 			};
-
-			if let Err(e) = self.output.send(output).await {
+			if let Err(e) = self.output.send(frame_output).await {
 				eprintln!("Output thread not available: {e}");
+			}
+
+			for update in updates {
+				self.last_poses
+					.lock()
+					.await
+					.insert(update.tag, update.pose.clone());
+
+				let output = VisionOutput {
+					module: input.module.clone(),
+					update: Some(update),
+					frame: None,
+					timestamp: input.frame.timestamp,
+					detection_time: detection_time.as_secs_f32(),
+					estimation_time: estimation_time.as_secs_f32(),
+					detections: Vec::new(),
+				};
+
+				if let Err(e) = self.output.send(output).await {
+					eprintln!("Output thread not available: {e}");
+				}
 			}
 		}
 	}
@@ -189,10 +202,11 @@ fn solve_tags(
 	intrinsics: &OpenCVCameraIntrinsics,
 	layout: &AprilTagLayout,
 	filters: &TagFilters,
-	last_pose: Option<Pose3DWithError>,
-) -> Option<Pose3DWithError> {
+	last_poses: HashMap<u8, Pose3DWithError>,
+	timestamp: f64,
+) -> Vec<PoseUpdate> {
 	if detections.size() == 0 {
-		return None;
+		return Vec::new();
 	}
 
 	let mut solved_poses = Vec::new();
@@ -214,8 +228,9 @@ fn solve_tags(
 		match solution {
 			PnPSolution::Multi(poses) => {
 				let best_pose = poses.into_iter().min_by(|x, y| {
-					score_pose(x, last_pose.as_ref())
-						.partial_cmp(&score_pose(y, last_pose.as_ref()))
+					let last_pose = last_poses.get(&detection.id);
+					score_pose(x, last_pose)
+						.partial_cmp(&score_pose(y, last_pose))
 						.unwrap_or(std::cmp::Ordering::Equal)
 				});
 				if let Some(pose) = best_pose {
@@ -239,30 +254,18 @@ fn solve_tags(
 						0.5,
 					);
 
-					solved_poses.push(pose);
+					solved_poses.push(PoseUpdate {
+						pose,
+						timestamp,
+						tag: detection.id,
+						covariance: PoseCovariance::from_matrix(covariance),
+					});
 				}
 			}
 		}
 	}
 
-	if solved_poses.is_empty() {
-		return None;
-	}
-
-	// Get the average pose
-
-	let mut pose_sum = solved_poses
-		.iter()
-		.fold(Pose3DWithError::default(), |acc, pose| Pose3DWithError {
-			error: acc.error + pose.error,
-			pose: acc.pose.add(&pose.pose),
-		});
-	let n = solved_poses.len() as f64;
-	pose_sum.pose.t /= n;
-	pose_sum.pose.r = solved_poses.first().unwrap().pose.r;
-	pose_sum.error /= n;
-
-	Some(pose_sum)
+	solved_poses
 }
 
 /// Scores a given ambiguous pose option, with lower being better

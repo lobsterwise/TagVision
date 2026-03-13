@@ -4,9 +4,16 @@ use serde::Deserialize;
 
 /// Camera intrinsics
 #[derive(Deserialize, Clone)]
-pub struct CameraCalibration {
-	pub camera_matrix: [[f64; 3]; 3],
-	pub distortion: [f64; 5],
+#[serde(untagged)]
+pub enum CameraCalibration {
+	Standard {
+		camera_matrix: [[f64; 3]; 3],
+		distortion: [f64; 5],
+	},
+	Wpi {
+		camera_matrix: [f64; 9],
+		distortion_coefficients: [f64; 8],
+	},
 }
 
 #[derive(Clone, Debug)]
@@ -24,16 +31,35 @@ pub struct OpenCVCameraIntrinsics {
 
 impl OpenCVCameraIntrinsics {
 	pub fn from_calib(calib: &CameraCalibration) -> Self {
-		Self {
-			fx: calib.camera_matrix[0][0],
-			fy: calib.camera_matrix[1][1],
-			cx: calib.camera_matrix[0][2],
-			cy: calib.camera_matrix[1][2],
-			k1: calib.distortion[0],
-			k2: calib.distortion[1],
-			p1: calib.distortion[2],
-			p2: calib.distortion[3],
-			k3: calib.distortion[4],
+		match calib {
+			CameraCalibration::Standard {
+				camera_matrix,
+				distortion,
+			} => Self {
+				fx: camera_matrix[0][0],
+				fy: camera_matrix[1][1],
+				cx: camera_matrix[0][2],
+				cy: camera_matrix[1][2],
+				k1: distortion[0],
+				k2: distortion[1],
+				p1: distortion[2],
+				p2: distortion[3],
+				k3: distortion[4],
+			},
+			CameraCalibration::Wpi {
+				camera_matrix,
+				distortion_coefficients,
+			} => Self {
+				fx: camera_matrix[0],
+				fy: camera_matrix[4],
+				cx: camera_matrix[2],
+				cy: camera_matrix[5],
+				k1: distortion_coefficients[0],
+				k2: distortion_coefficients[1],
+				p1: distortion_coefficients[2],
+				p2: distortion_coefficients[3],
+				k3: distortion_coefficients[4],
+			},
 		}
 	}
 
@@ -141,7 +167,7 @@ mod tests {
 
 	#[test]
 	fn test_undistort_one() {
-		let intrinsics = CameraCalibration {
+		let intrinsics = CameraCalibration::Standard {
 			camera_matrix: [[500.0, 0.0, 300.0], [0.0, 500.0, 250.0], [0.0, 0.0, 1.0]],
 			distortion: [1.5, -0.95, -0.005, 0.0025, 1.16],
 		};

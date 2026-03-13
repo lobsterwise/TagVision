@@ -49,22 +49,15 @@ impl CameraServer {
 		for module_id in module_ids {
 			let stream_url = format!("mjpg:http://{local_ip}:{CS_PORT}/{module_id}");
 
-			let pubs = match CameraInfoPubs::new(
-				module_id,
-				stream_url,
-				client,
-				reconnectable_client,
-			)
-			.await
-			{
-				Ok(pubs) => pubs,
-				Err(e) => {
-					error!("Failed to initialize CS module info: {e}");
-					continue;
-				}
-			};
+			// let pubs = CameraInfoPubs::new(
+			// 	module_id,
+			// 	stream_url,
+			// 	client,
+			// 	reconnectable_client,
+			// )
+			// .await;
 
-			info_pubs.insert(module_id.clone(), pubs);
+			// info_pubs.insert(module_id.clone(), pubs);
 
 			let (tx, rx) = broadcast::channel(5);
 			module_senders.insert(module_id.clone(), tx);
@@ -245,6 +238,7 @@ pub struct CameraServerInput {
 
 /// Publishers for camera info
 struct CameraInfoPubs {
+	name_pub: PubSub<String>,
 	connected_pub: PubSub<bool>,
 	streams_pub: PubSub<Vec<String>>,
 	streams: Vec<String>,
@@ -252,6 +246,7 @@ struct CameraInfoPubs {
 	mode_pub: PubSub<String>,
 	modes_pub: PubSub<Vec<String>>,
 	mode: Option<String>,
+	name: String,
 }
 
 impl CameraInfoPubs {
@@ -260,8 +255,11 @@ impl CameraInfoPubs {
 		stream_url: String,
 		client: &ClientHandle,
 		reconnectable_client: &ReconnectableClient,
-	) -> Result<Self, NewPublisherError> {
-		let table = format!("/CameraPublisher/Module {module_id}");
+	) -> Self {
+		let table = format!("/CameraPublisher/{module_id}");
+		let name_pub = reconnectable_client
+			.get_topic(format!("{table}/name"), Duration::from_secs(1), client)
+			.await;
 		let connected_pub = reconnectable_client
 			.get_topic(format!("{table}/connected"), Duration::from_secs(1), client)
 			.await;
@@ -275,18 +273,21 @@ impl CameraInfoPubs {
 			.get_topic(format!("{table}/modes"), Duration::from_secs(1), client)
 			.await;
 
-		Ok(Self {
+		Self {
+			name_pub,
 			connected_pub,
 			streams_pub,
 			streams: vec![stream_url],
 			mode_pub,
 			modes_pub,
 			mode: None,
-		})
+			name: module_id.to_string(),
+		}
 	}
 
 	/// Publishes info
 	async fn publish(&mut self) {
+		self.name_pub.publish(self.name.clone());
 		self.connected_pub.publish(true);
 		self.streams_pub.publish(self.streams.clone());
 		if let Some(mode) = &self.mode {
